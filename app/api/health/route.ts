@@ -5,6 +5,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+const TABLES = ["projects", "workspaces", "jobs"] as const;
+
 /**
  * Configuration and connectivity report. Deliberately exposes only booleans
  * about which secrets are present, never their values.
@@ -28,32 +30,64 @@ export async function GET() {
       Boolean(optionalEnv("CLAUDE_CODE_OAUTH_TOKEN")),
   };
 
-  // Prove the schema is reachable with the current keys.
-  let database: { ok: boolean; error?: string } = {
-    ok: false,
-    error: "not configured",
-  };
+  /**
+   * Probe every table the app depends on.
+   *
+   * Deliberately NOT using `{ head: true }`: a HEAD probe can come back
+   * without a usable error body, which previously made a missing schema look
+   * healthy. A real (limited) select surfaces PostgREST's PGRST205
+   * "table not found in schema cache" so an un-run migration is reported
+   * honestly.
+   */
+  const database: {
+    ok: boolean;
+    migrated: boolean;
+    tables: Record<string, "ok" | "missing" | string>;
+  } = { ok: false, migrated: false, tables: {} };
 
-  if (configured.supabase) {
-    try {
-      const supabase = await createSupabaseServerClient();
-      const { error } = await supabase
-        .from("projects")
-        .select("id", { head: true, count: "exact" });
-      database = error ? { ok: false, error: error.message } : { ok: true };
-    } catch (err) {
-      database = {
-        ok: false,
-        error: err instanceof Error ? err.message : "unknown error",
-      };
+  if (!configured.supabase) {
+    database.tables = Object.fromEntries(
+      TABLES.map((t) => [t, "not configured"]),
+    );
+  } else {
+    const supabase = await createSupabaseServerClient();
+
+    for (const table of TABLES) {
+      try {
+        const { error } = await supabase.from(table).select("id").limit(1);
+        if (!error) {
+          database.tables[table] = "ok";
+        } else if (error.code === "PGRST205" || error.code === "42P01") {
+          database.tables[table] = "missing";
+        } else {
+          database.tables[table] = error.message;
+        }
+      } catch (err) {
+        database.tables[table] =
+          err instanceof Error ? err.message : "unknown error";
+      }
     }
+
+    database.migrated = TABLES.every((t) => database.tables[t] === "ok");
+    database.ok = database.migrated;
   }
 
-  return NextResponse.json({
-    ok: configured.supabase && database.ok,
-    provider: providerName(),
-    configured,
-    database,
-    time: new Date().toISOString(),
-  });
+  const ok = configured.supabase && database.ok;
+
+  return NextResponse.json(
+    {
+      ok,
+      provider: providerName(),
+      configured,
+      database,
+      ...(database.migrated
+        ? {}
+        : {
+            nextStep:
+              "Run supabase/migrations/*.sql in the Supabase SQL editor, then reload.",
+          }),
+      time: new Date().toISOString(),
+    },
+    { status: ok ? 200 : 503 },
+  );
 }

@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { Boxes, FolderGit2, Terminal } from "lucide-react";
+import { Boxes, FolderGit2, Settings2, Terminal } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 const nav = [
   { href: "/", label: "Projects", icon: FolderGit2 },
   { href: "/workspaces", label: "Workspaces", icon: Boxes },
+  { href: "/setup", label: "Setup", icon: Settings2 },
 ];
 
 export function AppShell({
