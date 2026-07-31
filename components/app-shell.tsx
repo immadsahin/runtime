@@ -1,15 +1,16 @@
 import Image from "next/image";
 import Link from "next/link";
-import { Boxes, FolderGit2, LogOut, Settings2, Terminal } from "lucide-react";
+import { FolderGit2, LogOut, Settings2, Terminal } from "lucide-react";
 
 import { signOut } from "@/app/auth/actions";
 import { Button } from "@/components/ui/button";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { cn } from "@/lib/utils";
 
+// Workspaces gets its own nav entry once the route lands (M4/M5); a link to a
+// non-existent page would 404, so it is intentionally omitted for now.
 const nav = [
   { href: "/", label: "Projects", icon: FolderGit2 },
-  { href: "/workspaces", label: "Workspaces", icon: Boxes },
   { href: "/setup", label: "Setup", icon: Settings2 },
 ];
 

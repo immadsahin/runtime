@@ -74,18 +74,20 @@ export async function GET() {
 
   const ok = configured.supabase && database.ok;
 
+  // Point operators at the actual blocker: credentials come before migrations.
+  const nextStep = !configured.supabase
+    ? "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local, then reload."
+    : !database.migrated
+      ? "Run supabase/migrations/*.sql in the Supabase SQL editor, then reload."
+      : null;
+
   return NextResponse.json(
     {
       ok,
       provider: providerName(),
       configured,
       database,
-      ...(database.migrated
-        ? {}
-        : {
-            nextStep:
-              "Run supabase/migrations/*.sql in the Supabase SQL editor, then reload.",
-          }),
+      ...(nextStep ? { nextStep } : {}),
       time: new Date().toISOString(),
     },
     { status: ok ? 200 : 503 },

@@ -122,13 +122,29 @@ export type Database = {
         Row: WorkspaceRow;
         Insert: Insert<WorkspaceRow, "owner_id" | "project_id" | "branch">;
         Update: Partial<WorkspaceRow>;
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "workspaces_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       jobs: {
         Row: JobRow;
         Insert: Insert<JobRow, "owner_id" | "workspace_id" | "prompt">;
         Update: Partial<JobRow>;
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "jobs_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["id"];
+          },
+        ];
       };
     };
     Views: Record<never, never>;
