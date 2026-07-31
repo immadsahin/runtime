@@ -14,6 +14,10 @@ export type Owner = {
  * Runtime is single-user by design. Identity comes from GitHub OAuth, and
  * `RUNTIME_OWNER_GITHUB_LOGIN` is the allowlist: exactly one account may use
  * this deployment. This is the entire authorization model — no roles, no teams.
+ *
+ * The login is read from the GitHub OAuth identity (see {@link githubLogin}),
+ * so this only ever returns true for a user who actually signed in with the
+ * allowlisted GitHub account.
  */
 export function isOwner(user: User): boolean {
   const allowed = optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN");
@@ -21,9 +25,23 @@ export function isOwner(user: User): boolean {
   return githubLogin(user)?.toLowerCase() === allowed.toLowerCase();
 }
 
+/**
+ * The GitHub username, read from the server-maintained OAuth identity — NOT
+ * from `user_metadata`.
+ *
+ * `user_metadata` is writable by the user (`auth.updateUser({ data })`), so if
+ * any other Supabase provider is enabled (email/password, magic link, …) a
+ * non-GitHub user could set `user_name` to the owner's login and pass the
+ * allowlist. `identities[].identity_data` is populated by GoTrue from the
+ * provider on each sign-in and is not client-writable, and requiring a
+ * `github` identity also enforces that the session actually came from GitHub.
+ */
 export function githubLogin(user: User): string | null {
-  const meta = user.user_metadata as Record<string, unknown> | null;
-  const login = meta?.user_name ?? meta?.preferred_username ?? meta?.login;
+  const identity = user.identities?.find((i) => i.provider === "github");
+  if (!identity) return null;
+
+  const data = (identity.identity_data ?? {}) as Record<string, unknown>;
+  const login = data.user_name ?? data.preferred_username ?? data.login;
   return typeof login === "string" ? login : null;
 }
 
@@ -57,20 +75,5 @@ export async function getOwnerSafe(): Promise<Owner | null> {
     return await getOwner();
   } catch {
     return null;
-  }
-}
-
-/** Route-handler guard: returns the owner or throws an unauthorized error. */
-export async function requireOwner(): Promise<Owner> {
-  const owner = await getOwner();
-  if (!owner) throw new UnauthorizedError();
-  return owner;
-}
-
-export class UnauthorizedError extends Error {
-  readonly status = 401;
-  constructor() {
-    super("Not signed in as the Runtime owner.");
-    this.name = "UnauthorizedError";
   }
 }
