@@ -1,8 +1,12 @@
+import { redirect } from "next/navigation";
 import { CircleDashed } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getOwnerSafe } from "@/lib/auth/owner";
+
+export const dynamic = "force-dynamic";
 
 const milestones = [
   { id: "M0", label: "App skeleton, Preview + setup scripts", done: true },
@@ -18,7 +22,10 @@ const milestones = [
   { id: "M10", label: "Linear issues attached to projects" },
 ];
 
-export default function Home() {
+export default async function Home() {
+  // The control plane is owner-only; unauthenticated visitors go to sign-in.
+  if (!(await getOwnerSafe())) redirect("/signin");
+
   return (
     <AppShell active="/">
       <div className="space-y-2">
