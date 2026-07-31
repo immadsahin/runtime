@@ -46,6 +46,20 @@ export async function getOwner(): Promise<Owner | null> {
   };
 }
 
+/**
+ * Like {@link getOwner} but never throws. Before Supabase is configured the
+ * server client throws on missing env; UI (the app shell, the sign-in page)
+ * must still render so `/setup` can guide configuration, so it treats any
+ * failure as "signed out".
+ */
+export async function getOwnerSafe(): Promise<Owner | null> {
+  try {
+    return await getOwner();
+  } catch {
+    return null;
+  }
+}
+
 /** Route-handler guard: returns the owner or throws an unauthorized error. */
 export async function requireOwner(): Promise<Owner> {
   const owner = await getOwner();
