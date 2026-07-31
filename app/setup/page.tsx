@@ -66,7 +66,7 @@ async function runChecks(): Promise<Check[]> {
       label: "GitHub OAuth provider",
       state: "pending",
       detail:
-        "Enable GitHub under Authentication -> Providers in the Supabase dashboard. Cannot be verified from the server.",
+        "Enable GitHub under Authentication -> Providers in Supabase, then add <app-origin>/auth/callback to Redirect URLs. Cannot be verified from the server.",
     },
     {
       label: "GitHub PAT",

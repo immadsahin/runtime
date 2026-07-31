@@ -9,6 +9,13 @@ const nextConfig: NextConfig = {
    */
   allowedDevOrigins: ["127.0.0.1", "localhost", "*.modal.host"],
 
+  images: {
+    // GitHub avatar served for the signed-in owner in the app shell.
+    remotePatterns: [
+      { protocol: "https", hostname: "avatars.githubusercontent.com" },
+    ],
+  },
+
   experimental: {
     /**
      * Inline CSS into the document instead of emitting <link> tags.
