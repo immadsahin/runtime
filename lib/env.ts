@@ -48,8 +48,3 @@ export function requireEnv(key: EnvKey): string {
 export function providerName(): "local" | "modal" {
   return optionalEnv("RUNTIME_PROVIDER") === "modal" ? "modal" : "local";
 }
-
-/** Absolute base URL of this app, used for OAuth redirects. */
-export function baseUrl(): string {
-  return optionalEnv("RUNTIME_BASE_URL") ?? "http://localhost:3000";
-}
