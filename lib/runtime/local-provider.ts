@@ -136,7 +136,7 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     // Detached: the job outlives this HTTP request, exactly like Modal.
     const child = spawn(
       "bash",
-      ["-lc", claudeCommand(input) + ` >> ${shellQuote(logPath)} 2>&1`],
+      ["-lc", `set -a; source ${shellQuote(p.env)}; set +a; ${claudeCommand(input)} >> ${shellQuote(logPath)} 2>&1`],
       { cwd: worktree ?? p.base, detached: true, stdio: "ignore" },
     );
     child.unref();
