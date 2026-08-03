@@ -31,4 +31,7 @@ repository. Keep it out of `NEXT_PUBLIC_*`, commits, and database rows.
 After syncing a repository, open its project page and create a workspace. A
 blank branch name produces a unique `runtime/...` branch; a supplied branch is
 created from the repository default branch. The local provider stores files in
-`$TMPDIR/runtime-local` unless `RUNTIME_LOCAL_ROOT` is configured.
+`$TMPDIR/runtime-local` unless `RUNTIME_LOCAL_ROOT` is configured. For a
+deployment that must survive a host restart, set `RUNTIME_LOCAL_ROOT` to a
+durable, app-private directory owned by the Runtime service account (mode 0700);
+the temporary-directory default is for local development only.

@@ -21,7 +21,8 @@ function isSameOriginRequest(request: Request): boolean {
   const origin = request.headers.get("origin");
   if (!origin) return false;
 
-  const baseUrl = optionalEnv("RUNTIME_BASE_URL") ?? request.url;
+  const baseUrl = optionalEnv("RUNTIME_BASE_URL");
+  if (!baseUrl) return false;
   try {
     return new URL(origin).origin === new URL(baseUrl).origin;
   } catch {
