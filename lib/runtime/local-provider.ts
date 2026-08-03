@@ -15,9 +15,30 @@ import type {
   RuntimeProvider,
   StreamLogsInput,
 } from "@/lib/runtime/types";
+import { workspaceRuntimeEnvironment } from "@/lib/runtime/workspace-environment";
 
 const ROOT =
   process.env.RUNTIME_LOCAL_ROOT ?? path.join(os.tmpdir(), "runtime-local");
+const SAFE_CHILD_ENV_KEYS = [
+  "CI",
+  "COREPACK_HOME",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "NPM_CONFIG_CACHE",
+  "PATH",
+  "PNPM_HOME",
+  "SHELL",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "TEMP",
+  "USER",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+] as const;
 
 /**
  * Development backend: same lifecycle as Modal, executed on this machine.
@@ -97,19 +118,15 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     }
 
     await input.onPhase?.("secrets");
-    await fs.mkdir(path.dirname(p.env), { recursive: true });
-    await writeEnvironmentFile(p.env, input.env);
+    // Dependency lifecycle scripts belong to the repository being cloned, so
+    // never expose Runtime credentials until an explicit Claude job starts.
 
     await input.onPhase?.("install");
     const warnings: string[] = [];
     const install = input.installCommand ?? (await inferInstall(worktreePath));
     if (install) {
       try {
-        await run(
-          "bash",
-          ["-lc", `${sourceEnvironmentCommand(p.env)} ${install}`],
-          { cwd: worktreePath },
-        );
+        await run("bash", ["-lc", install], { cwd: worktreePath });
       } catch (error) {
         // Dependency setup is advisory: a repository may be intentionally
         // incomplete until the operator supplies a secret. Return and persist
@@ -146,6 +163,11 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     await fs.mkdir(p.logs, { recursive: true });
     const logPath = path.join(p.logs, `${input.jobId}.log`);
     await fs.writeFile(logPath, "");
+    const workspaceEnv = workspaceRuntimeEnvironment();
+    if (Object.keys(workspaceEnv).length > 0) {
+      await fs.mkdir(path.dirname(p.env), { recursive: true });
+      await writeEnvironmentFile(p.env, workspaceEnv);
+    }
 
     const worktree = await firstWorktree(p.worktrees);
 
@@ -154,9 +176,14 @@ export class LocalRuntimeProvider implements RuntimeProvider {
       "bash",
       [
         "-lc",
-        `${sourceEnvironmentCommand(p.env)} ${claudeCommand(input)} >> ${shellQuote(logPath)} 2>&1`,
+        `${sourceEnvironmentCommand(p.env, true)} ${claudeCommand(input)} >> ${shellQuote(logPath)} 2>&1`,
       ],
-      { cwd: worktree ?? p.base, detached: true, stdio: "ignore" },
+      {
+        cwd: worktree ?? p.base,
+        detached: true,
+        env: safeChildEnvironment(),
+        stdio: "ignore",
+      },
     );
     child.unref();
 
@@ -297,7 +324,10 @@ function run(
   opts: { cwd: string; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env });
+    const child = spawn(cmd, args, {
+      cwd: opts.cwd,
+      env: opts.env ?? safeChildEnvironment(),
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
@@ -338,9 +368,9 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function sourceEnvironmentCommand(file: string): string {
+function sourceEnvironmentCommand(file: string, removeAfterLoad = false): string {
   const quoted = shellQuote(file);
-  return `if [ -f ${quoted} ]; then set -a; . ${quoted}; set +a; fi;`;
+  return `if [ -f ${quoted} ]; then set -a; . ${quoted}; ${removeAfterLoad ? `rm -f ${quoted}; ` : ""}set +a; fi;`;
 }
 
 async function writeEnvironmentFile(
@@ -371,7 +401,7 @@ async function createGitAskPass(base: string, token: string) {
 
   return {
     env: {
-      ...process.env,
+      ...safeChildEnvironment(),
       GIT_ASKPASS: file,
       GIT_ASKPASS_REQUIRE: "force",
       GIT_TERMINAL_PROMPT: "0",
@@ -379,6 +409,17 @@ async function createGitAskPass(base: string, token: string) {
     },
     remove: () => fs.rm(file, { force: true }),
   };
+}
+
+function safeChildEnvironment(additions?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    NODE_ENV: process.env.NODE_ENV ?? "production",
+  };
+  for (const key of SAFE_CHILD_ENV_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined) environment[key] = value;
+  }
+  return additions ? Object.assign(environment, additions) : environment;
 }
 
 function errorMessage(error: unknown): string {

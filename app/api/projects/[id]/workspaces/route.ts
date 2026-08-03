@@ -11,6 +11,7 @@ import {
 import { optionalEnv } from "@/lib/env";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import type { ProvisionPhase } from "@/lib/runtime/types";
+import { workspaceRuntimeEnvironment } from "@/lib/runtime/workspace-environment";
 
 export const dynamic = "force-dynamic";
 
@@ -43,16 +44,6 @@ function isValidBranchName(branch: string): boolean {
 
 function generatedBranch(): string {
   return `runtime/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
-}
-
-function workspaceEnvironment(): Record<string, string> {
-  const keys = ["GITHUB_PAT", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] as const;
-  return Object.fromEntries(
-    keys.flatMap((key) => {
-      const value = optionalEnv(key);
-      return value ? [[key, value]] : [];
-    }),
-  );
 }
 
 function safeErrorMessage(error: unknown): string {
@@ -148,7 +139,7 @@ export async function POST(request: Request, context: RouteContext) {
       repoFullName: project.fullName,
       baseBranch: project.defaultBranch,
       branch: workspace.branch,
-      env: workspaceEnvironment(),
+      env: workspaceRuntimeEnvironment(),
       onPhase: setPhase,
     });
 
