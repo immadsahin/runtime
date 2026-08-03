@@ -71,7 +71,8 @@ create table projects (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
 
-  constraint projects_owner_repo_unique unique (owner_id, github_repo_id)
+  constraint projects_owner_repo_unique unique (owner_id, github_repo_id),
+  constraint projects_owner_id_unique unique (owner_id, id)
 );
 
 create index projects_owner_pushed_idx
@@ -85,7 +86,7 @@ create index projects_full_name_idx on projects (owner_id, full_name);
 create table workspaces (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users (id) on delete cascade,
-  project_id uuid not null references projects (id) on delete cascade,
+  project_id uuid not null,
 
   status workspace_status not null default 'creating',
   phase provision_phase,
@@ -108,7 +109,13 @@ create table workspaces (
 
   last_active_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+
+  -- A workspace cannot point at a project owned by another Runtime user.
+  constraint workspaces_owner_project_fkey
+    foreign key (owner_id, project_id)
+    references projects (owner_id, id) on delete cascade,
+  constraint workspaces_owner_id_unique unique (owner_id, id)
 );
 
 create index workspaces_owner_status_idx on workspaces (owner_id, status);
@@ -127,7 +134,7 @@ create unique index workspaces_active_branch_unique
 create table jobs (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users (id) on delete cascade,
-  workspace_id uuid not null references workspaces (id) on delete cascade,
+  workspace_id uuid not null,
 
   status job_status not null default 'queued',
   prompt text not null,
@@ -147,7 +154,12 @@ create table jobs (
   started_at timestamptz,
   finished_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+
+  -- A job cannot point at a workspace owned by another Runtime user.
+  constraint jobs_owner_workspace_fkey
+    foreign key (owner_id, workspace_id)
+    references workspaces (owner_id, id) on delete cascade
 );
 
 create index jobs_workspace_created_idx

@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { optionalEnv, providerName } from "@/lib/env";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  probeRuntimeDatabase,
+  RUNTIME_TABLES,
+  type TableProbeStatus,
+} from "@/lib/supabase/probe";
 
 export const dynamic = "force-dynamic";
-
-const TABLES = ["projects", "workspaces", "jobs"] as const;
 
 /**
  * Configuration and connectivity report. Deliberately exposes only booleans
@@ -42,33 +44,18 @@ export async function GET() {
   const database: {
     ok: boolean;
     migrated: boolean;
-    tables: Record<string, "ok" | "missing" | string>;
+    tables: Record<string, TableProbeStatus | "not configured">;
   } = { ok: false, migrated: false, tables: {} };
 
   if (!configured.supabase) {
     database.tables = Object.fromEntries(
-      TABLES.map((t) => [t, "not configured"]),
+      RUNTIME_TABLES.map((t) => [t, "not configured"]),
     );
   } else {
-    const supabase = await createSupabaseServerClient();
-
-    for (const table of TABLES) {
-      try {
-        const { error } = await supabase.from(table).select("id").limit(1);
-        if (!error) {
-          database.tables[table] = "ok";
-        } else if (error.code === "PGRST205" || error.code === "42P01") {
-          database.tables[table] = "missing";
-        } else {
-          database.tables[table] = error.message;
-        }
-      } catch (err) {
-        database.tables[table] =
-          err instanceof Error ? err.message : "unknown error";
-      }
-    }
-
-    database.migrated = TABLES.every((t) => database.tables[t] === "ok");
+    database.tables = await probeRuntimeDatabase();
+    database.migrated = RUNTIME_TABLES.every(
+      (table) => database.tables[table] === "ok",
+    );
     database.ok = database.migrated;
   }
 

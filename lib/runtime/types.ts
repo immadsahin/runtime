@@ -122,6 +122,8 @@ export type CreateWorkspaceResult = {
   sandboxId: string;
   volumeName: string;
   worktreePath: string;
+  /** Non-fatal provisioning problems that should be shown before a job runs. */
+  warnings: string[];
 };
 
 export type ExecuteJobInput = {

@@ -31,17 +31,19 @@ export function SignInButton({ next = "/" }: { next?: string }) {
     setLoading(true);
     setError(null);
 
-    const supabase = createSupabaseBrowserClient();
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "github",
-      options: { redirectTo, scopes: "read:user user:email" },
-    });
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "github",
+        options: { redirectTo, scopes: "read:user user:email" },
+      });
 
-    // On success the browser navigates away, so we only reach here on failure.
-    if (error) {
-      setError(error.message);
+      // On success the browser navigates away, so we only reach here on failure.
+      if (error) throw error;
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not start sign-in.");
       setLoading(false);
     }
   }

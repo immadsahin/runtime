@@ -46,5 +46,9 @@ export function requireEnv(key: EnvKey): string {
 
 /** Which RuntimeProvider implementation to use. */
 export function providerName(): "local" | "modal" {
-  return optionalEnv("RUNTIME_PROVIDER") === "modal" ? "modal" : "local";
+  const provider = optionalEnv("RUNTIME_PROVIDER") ?? "local";
+  if (provider === "local" || provider === "modal") return provider;
+  throw new Error(
+    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local" or "modal".`,
+  );
 }

@@ -11,7 +11,7 @@
 		},
 		"run": {
 			"enabled": true,
-			"command": "set -e; if [ \"${RUNTIME_PREVIEW_MODE:-production}\" = \"dev\" ]; then exec pnpm dev --port ${PORT:-3000}; fi; pnpm build; exec pnpm start --port ${PORT:-3000}"
+			"command": "set -e; if [ \"${RUNTIME_PREVIEW_MODE:-production}\" = \"dev\" ]; then exec ./node_modules/.bin/next dev; fi; pnpm build; exec ./node_modules/.bin/next start"
 		},
 		"archive": {
 			"enabled": true,

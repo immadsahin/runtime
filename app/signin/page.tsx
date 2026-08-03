@@ -19,7 +19,9 @@ const ERROR_MESSAGES: Record<string, string> = {
 
 function errorMessage(code: string | undefined): string | null {
   if (!code) return null;
-  return ERROR_MESSAGES[code] ?? "Sign-in failed. Please try again.";
+  return Object.hasOwn(ERROR_MESSAGES, code)
+    ? ERROR_MESSAGES[code]
+    : "Sign-in failed. Please try again.";
 }
 
 export default async function SignInPage({

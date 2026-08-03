@@ -4,7 +4,10 @@ import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { optionalEnv } from "@/lib/env";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  probeRuntimeDatabase,
+  RUNTIME_TABLES,
+} from "@/lib/supabase/probe";
 
 export const dynamic = "force-dynamic";
 
@@ -23,23 +26,19 @@ async function runChecks(): Promise<Check[]> {
   let migrationDetail = "Supabase keys are not configured yet.";
 
   if (supabaseConfigured) {
-    try {
-      const supabase = await createSupabaseServerClient();
-      const results = await Promise.all(
-        (["projects", "workspaces", "jobs"] as const).map(async (t) => {
-          const { error } = await supabase.from(t).select("id").limit(1);
-          return { t, ok: !error };
-        }),
-      );
-      const missing = results.filter((r) => !r.ok).map((r) => r.t);
-      migrated = missing.length === 0;
-      migrationDetail = migrated
-        ? "projects, workspaces and jobs are all reachable."
-        : `Missing tables: ${missing.join(", ")}. Run supabase/migrations/*.sql in the SQL editor.`;
-    } catch (err) {
-      migrationDetail =
-        err instanceof Error ? err.message : "Could not reach the database.";
-    }
+    const tableStatus = await probeRuntimeDatabase();
+    const missing = RUNTIME_TABLES.filter(
+      (table) => tableStatus[table] === "missing",
+    );
+    const unreachable = RUNTIME_TABLES.filter(
+      (table) => tableStatus[table] === "unreachable",
+    );
+    migrated = missing.length === 0 && unreachable.length === 0;
+    migrationDetail = migrated
+      ? "projects, workspaces and jobs are all reachable."
+      : missing.length > 0
+        ? `Missing tables: ${missing.join(", ")}. Run supabase/migrations/*.sql in the SQL editor.`
+        : "Could not reach the database. Check the Supabase URL and publishable key.";
   }
 
   return [
@@ -49,6 +48,13 @@ async function runChecks(): Promise<Check[]> {
       detail: supabaseConfigured
         ? "URL and publishable key are set."
         : "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+    },
+    {
+      label: "Runtime owner",
+      state: optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN") ? "ok" : "missing",
+      detail: optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN")
+        ? "The GitHub owner allowlist is configured."
+        : "Set RUNTIME_OWNER_GITHUB_LOGIN or every GitHub sign-in will be rejected.",
     },
     {
       label: "Database migrated",

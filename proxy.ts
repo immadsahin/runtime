@@ -17,25 +17,30 @@ export async function proxy(request: NextRequest) {
   // Before Supabase is configured the app still needs to boot and render.
   if (!url || !key) return response;
 
-  const supabase = createServerClient(url, key, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
+  try {
+    const supabase = createServerClient(url, key, {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          for (const { name, value } of cookiesToSet) {
+            request.cookies.set(name, value);
+          }
+          response = NextResponse.next({ request });
+          for (const { name, value, options } of cookiesToSet) {
+            response.cookies.set(name, value, options);
+          }
+        },
       },
-      setAll(cookiesToSet) {
-        for (const { name, value } of cookiesToSet) {
-          request.cookies.set(name, value);
-        }
-        response = NextResponse.next({ request });
-        for (const { name, value, options } of cookiesToSet) {
-          response.cookies.set(name, value, options);
-        }
-      },
-    },
-  });
+    });
 
-  // Touching getUser() is what performs the refresh; do not remove.
-  await supabase.auth.getUser();
+    // Touching getUser() is what performs the refresh; do not remove.
+    await supabase.auth.getUser();
+  } catch (error) {
+    // Configuration diagnostics must remain reachable if the URL/key is bad.
+    console.error("Supabase session refresh was skipped", error);
+  }
 
   return response;
 }

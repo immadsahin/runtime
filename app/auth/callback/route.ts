@@ -47,18 +47,22 @@ export async function GET(request: Request) {
 /**
  * Absolute origin to redirect back to after the OAuth round trip.
  *
- * Prefer the explicitly configured `RUNTIME_BASE_URL` (the canonical, stable
- * public URL — the correct choice behind a proxy that rewrites the Host). Fall
- * back to the forwarded host in production (the preview tunnel / load balancer
- * sets `x-forwarded-host`), and finally to the request origin in local dev.
+ * `RUNTIME_BASE_URL` is mandatory in production because a forwarded host is a
+ * request header and therefore cannot be trusted for an authenticated
+ * redirect. Local development may safely use the request origin.
  */
-function redirectBase(request: Request, requestUrl: URL): string {
+function redirectBase(_request: Request, requestUrl: URL): string {
   const configured = optionalEnv("RUNTIME_BASE_URL");
-  if (configured) return configured.replace(/\/+$/, "");
+  if (configured) {
+    const url = new URL(configured);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error("RUNTIME_BASE_URL must use http or https.");
+    }
+    return url.origin;
+  }
 
-  const forwardedHost = request.headers.get("x-forwarded-host");
-  if (process.env.NODE_ENV === "production" && forwardedHost) {
-    return `https://${forwardedHost}`;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("RUNTIME_BASE_URL must be set in production.");
   }
   return requestUrl.origin;
 }

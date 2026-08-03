@@ -124,11 +124,11 @@ export type Database = {
         Update: Partial<WorkspaceRow>;
         Relationships: [
           {
-            foreignKeyName: "workspaces_project_id_fkey";
-            columns: ["project_id"];
+            foreignKeyName: "workspaces_owner_project_fkey";
+            columns: ["owner_id", "project_id"];
             isOneToOne: false;
             referencedRelation: "projects";
-            referencedColumns: ["id"];
+            referencedColumns: ["owner_id", "id"];
           },
         ];
       };
@@ -138,11 +138,11 @@ export type Database = {
         Update: Partial<JobRow>;
         Relationships: [
           {
-            foreignKeyName: "jobs_workspace_id_fkey";
-            columns: ["workspace_id"];
+            foreignKeyName: "jobs_owner_workspace_fkey";
+            columns: ["owner_id", "workspace_id"];
             isOneToOne: false;
             referencedRelation: "workspaces";
-            referencedColumns: ["id"];
+            referencedColumns: ["owner_id", "id"];
           },
         ];
       };

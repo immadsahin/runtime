@@ -6,19 +6,42 @@
 # Supabase project. Requires local postgres (installed by the setup script).
 set -euo pipefail
 
-PG_BIN=${PG_BIN:-/usr/lib/postgresql/16/bin}
+PG_BIN=${PG_BIN:-$(pg_config --bindir)}
+PG_DATA=${PG_DATA:-}
+PG_CONFIG=${PG_CONFIG:-}
+PG_OS_USER=${PG_OS_USER:-postgres}
 DB=${DB:-runtime_verify}
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 
-run_psql() { sudo -u postgres psql -q "$@"; }
+run_as_postgres() {
+  if [ "$(id -un)" = "$PG_OS_USER" ]; then
+    "$@"
+  else
+    sudo -u "$PG_OS_USER" "$@"
+  fi
+}
 
-if ! sudo -u postgres "$PG_BIN/pg_ctl" -D /var/lib/postgresql/16/main status >/dev/null 2>&1; then
+run_psql() { run_as_postgres "$PG_BIN/psql" -q "$@"; }
+
+if ! run_as_postgres "$PG_BIN/pg_isready" -q; then
   echo "==> starting postgres"
-  sudo -u postgres "$PG_BIN/pg_ctl" \
-    -D /var/lib/postgresql/16/main \
-    -l /tmp/pg.log \
-    -o "-c config_file=/etc/postgresql/16/main/postgresql.conf" \
-    start
+  if [ -n "$PG_DATA" ]; then
+    pg_opts=()
+    if [ -n "$PG_CONFIG" ]; then
+      pg_opts=(-o "-c config_file=$PG_CONFIG")
+    fi
+    run_as_postgres "$PG_BIN/pg_ctl" -D "$PG_DATA" -l /tmp/runtime-pg.log "${pg_opts[@]}" start
+  elif command -v pg_lsclusters >/dev/null 2>&1; then
+    read -r version cluster _ < <(pg_lsclusters --no-header | head -n 1)
+    if [ -z "${version:-}" ] || [ -z "${cluster:-}" ]; then
+      echo "No PostgreSQL cluster found. Set PG_DATA (and optionally PG_CONFIG)." >&2
+      exit 1
+    fi
+    sudo pg_ctlcluster "$version" "$cluster" start
+  else
+    echo "PostgreSQL is not running. Set PG_DATA (and optionally PG_CONFIG) to start it." >&2
+    exit 1
+  fi
   sleep 2
 fi
 

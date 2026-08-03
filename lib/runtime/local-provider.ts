@@ -40,6 +40,7 @@ export class LocalRuntimeProvider implements RuntimeProvider {
       worktrees: path.join(base, "worktrees"),
       logs: path.join(base, ".runtime", "logs"),
       env: path.join(base, ".runtime", "env"),
+      provisionWarnings: path.join(base, ".runtime", "provision-warnings.log"),
     };
   }
 
@@ -54,11 +55,17 @@ export class LocalRuntimeProvider implements RuntimeProvider {
 
     await input.onPhase?.("clone");
     const token = input.env.GITHUB_PAT;
-    const remote = token
-      ? `https://x-access-token:${token}@github.com/${input.repoFullName}.git`
-      : `https://github.com/${input.repoFullName}.git`;
+    const remote = `https://github.com/${input.repoFullName}.git`;
     if (!(await exists(p.repo))) {
-      await run("git", ["clone", remote, p.repo], { cwd: p.base });
+      const gitAuth = token ? await createGitAskPass(p.base, token) : null;
+      try {
+        await run("git", ["clone", remote, p.repo], {
+          cwd: p.base,
+          env: gitAuth?.env,
+        });
+      } finally {
+        await gitAuth?.remove();
+      }
       // Never persist the token in git config.
       await run(
         "git",
@@ -91,21 +98,29 @@ export class LocalRuntimeProvider implements RuntimeProvider {
 
     await input.onPhase?.("secrets");
     await fs.mkdir(path.dirname(p.env), { recursive: true });
-    await fs.writeFile(
-      p.env,
-      Object.entries(input.env)
-        .map(([k, v]) => `${k}=${v}`)
-        .join("\n"),
-      { mode: 0o600 },
-    );
+    await writeEnvironmentFile(p.env, input.env);
 
     await input.onPhase?.("install");
+    const warnings: string[] = [];
     const install = input.installCommand ?? (await inferInstall(worktreePath));
     if (install) {
-      await run("bash", ["-lc", install], { cwd: worktreePath }).catch(() => {
-        // A failing install must not fail the whole workspace; it is surfaced
-        // as a health-check warning instead.
-      });
+      try {
+        await run(
+          "bash",
+          ["-lc", `${sourceEnvironmentCommand(p.env)} ${install}`],
+          { cwd: worktreePath },
+        );
+      } catch (error) {
+        // Dependency setup is advisory: a repository may be intentionally
+        // incomplete until the operator supplies a secret. Return and persist
+        // the warning so callers can surface it before an agent job starts.
+        const warning = `Dependency installation failed: ${errorMessage(error)}`;
+        warnings.push(warning);
+        await fs.appendFile(p.provisionWarnings, `${warning}\n`, {
+          mode: 0o600,
+        });
+        console.warn(`Runtime workspace ${input.workspaceId}: ${warning}`);
+      }
     }
 
     await input.onPhase?.("health_check");
@@ -116,6 +131,7 @@ export class LocalRuntimeProvider implements RuntimeProvider {
       sandboxId: `local:${input.workspaceId}`,
       volumeName: `local:${input.workspaceId}`,
       worktreePath,
+      warnings,
     };
   }
 
@@ -136,7 +152,10 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     // Detached: the job outlives this HTTP request, exactly like Modal.
     const child = spawn(
       "bash",
-      ["-lc", `set -a; source ${shellQuote(p.env)}; set +a; ${claudeCommand(input)} >> ${shellQuote(logPath)} 2>&1`],
+      [
+        "-lc",
+        `${sourceEnvironmentCommand(p.env)} ${claudeCommand(input)} >> ${shellQuote(logPath)} 2>&1`,
+      ],
       { cwd: worktree ?? p.base, detached: true, stdio: "ignore" },
     );
     child.unref();
@@ -244,7 +263,11 @@ async function inferInstall(dir: string): Promise<string | null> {
     return "pnpm install --frozen-lockfile";
   }
   if (await exists(path.join(dir, "package-lock.json"))) return "npm ci";
-  if (await exists(path.join(dir, "yarn.lock"))) return "yarn install";
+  if (await exists(path.join(dir, "yarn.lock"))) {
+    return (await exists(path.join(dir, ".yarnrc.yml")))
+      ? "yarn install --immutable"
+      : "yarn install --frozen-lockfile";
+  }
   if (await exists(path.join(dir, "package.json"))) return "npm install";
   if (await exists(path.join(dir, "uv.lock"))) return "uv sync";
   if (await exists(path.join(dir, "requirements.txt"))) {
@@ -257,8 +280,12 @@ async function inferInstall(dir: string): Promise<string | null> {
 
 async function firstWorktree(dir: string): Promise<string | null> {
   try {
-    const entries = await fs.readdir(dir);
-    return entries[0] ? path.join(dir, entries[0]) : null;
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const name = entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b))[0];
+    return name ? path.join(dir, name) : null;
   } catch {
     return null;
   }
@@ -267,10 +294,10 @@ async function firstWorktree(dir: string): Promise<string | null> {
 function run(
   cmd: string,
   args: string[],
-  opts: { cwd: string },
+  opts: { cwd: string; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd: opts.cwd });
+    const child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
@@ -309,6 +336,53 @@ function sanitizeBranch(branch: string): string {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function sourceEnvironmentCommand(file: string): string {
+  const quoted = shellQuote(file);
+  return `if [ -f ${quoted} ]; then set -a; . ${quoted}; set +a; fi;`;
+}
+
+async function writeEnvironmentFile(
+  file: string,
+  env: Record<string, string>,
+): Promise<void> {
+  const entries = Object.entries(env).sort(([a], [b]) => a.localeCompare(b));
+  for (const [key] of entries) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid environment variable name: ${key}`);
+    }
+  }
+  await fs.writeFile(
+    file,
+    entries.map(([key, value]) => `export ${key}=${shellQuote(value)}`).join("\n"),
+    { mode: 0o600 },
+  );
+}
+
+async function createGitAskPass(base: string, token: string) {
+  const file = path.join(base, ".runtime", "git-askpass.sh");
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(
+    file,
+    "#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s' x-access-token ;;\n  *) printf '%s' \"$RUNTIME_GIT_PASSWORD\" ;;\nesac\n",
+    { mode: 0o700 },
+  );
+
+  return {
+    env: {
+      ...process.env,
+      GIT_ASKPASS: file,
+      GIT_ASKPASS_REQUIRE: "force",
+      GIT_TERMINAL_PROMPT: "0",
+      RUNTIME_GIT_PASSWORD: token,
+    },
+    remove: () => fs.rm(file, { force: true }),
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "unknown error";
 }
 
 function sleep(ms: number): Promise<void> {

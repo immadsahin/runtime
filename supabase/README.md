@@ -49,7 +49,8 @@ exits non-zero if a guarantee regresses.
    OAuth app's client ID and secret.
 2. Set the GitHub OAuth app's callback URL to:
    `https://lnefgozarjjuyztnmnkp.supabase.co/auth/v1/callback`
-3. **Authentication → URL Configuration**: add the app's origin (for example
-   `http://localhost:3000`) to the redirect allowlist.
+3. **Authentication → URL Configuration**: add `<app-origin>/auth/callback`
+   (for example `http://localhost:3000/auth/callback`) to the Redirect URLs
+   allowlist.
 
 `/setup` in the running app reports which of these are satisfied.
