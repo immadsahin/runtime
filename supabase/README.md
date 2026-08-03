@@ -54,3 +54,16 @@ exits non-zero if a guarantee regresses.
    allowlist.
 
 `/setup` in the running app reports which of these are satisfied.
+
+## GitHub repository synchronization
+
+GitHub OAuth above establishes identity only. M2 repository sync reads a
+server-only `GITHUB_PAT`, then verifies that its `/user` identity matches
+`RUNTIME_OWNER_GITHUB_LOGIN` before saving any projects.
+
+Create a **fine-grained** PAT for that same GitHub account, restrict it to the
+repositories Runtime should manage, grant repository metadata read access, and
+authorize it for any SSO-enforced organizations. Put it only in
+`GITHUB_PAT` in `.env.local` or your deployment's secret manager — never in a
+`NEXT_PUBLIC_` variable, database row, or source file. Clone/push and pull
+request permissions are intentionally deferred to later milestones.
