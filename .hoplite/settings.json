@@ -1,0 +1,26 @@
+{
+	"version": 1,
+	"ports": {
+		"preview": 3000,
+		"additional": {}
+	},
+	"scripts": {
+		"setup": {
+			"enabled": true,
+			"command": "set -e; corepack enable; corepack prepare pnpm@10.26.0 --activate; pnpm install --frozen-lockfile; if ! command -v psql >/dev/null 2>&1; then sudo apt-get update -qq && sudo apt-get install -y -qq postgresql; fi"
+		},
+		"run": {
+			"enabled": true,
+			"command": "set -e; if [ \"${RUNTIME_PREVIEW_MODE:-production}\" = \"dev\" ]; then exec ./node_modules/.bin/next dev; fi; pnpm build; exec ./node_modules/.bin/next start"
+		},
+		"archive": {
+			"enabled": true,
+			"command": null
+		},
+		"check": {
+			"enabled": true,
+			"command": "pnpm check"
+		}
+	},
+	"mcpServers": []
+}
