@@ -23,7 +23,7 @@ const milestones = [
   { id: "M1", label: "Supabase schema: projects, workspaces, jobs", done: true },
   { id: "M2", label: "GitHub sign-in and repository sync", done: true },
   { id: "M3", label: "Local workspaces: clone + isolated worktree", done: true },
-  { id: "M4", label: "Modal provider: durable cloud workspace" },
+  { id: "M4", label: "Modal provider: durable cloud workspace", done: true },
   { id: "M5", label: "Resume, suspend, destroy" },
   { id: "M6", label: "Run Claude Code as a detached job" },
   { id: "M7", label: "Stream terminal logs" },

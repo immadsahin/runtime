@@ -10,9 +10,11 @@ actual worktree and process lifecycle.
 - **M2:** GitHub OAuth plus server-side repository synchronization.
 - **M3:** Local workspaces. Create an isolated Git worktree from a synchronized
   project and observe its provisioning lifecycle in the browser.
+- **M4:** Modal workspaces. The same lifecycle can create a disposable Modal
+  Sandbox backed by a named persistent Modal Volume.
 
-Modal-backed cloud workspaces, workspace suspension, Claude jobs, logs, diffs,
-and pull requests intentionally come in later milestones.
+Workspace controls, Claude jobs, logs, diffs, and pull requests intentionally
+come in later milestones.
 
 ## Local setup
 
@@ -35,3 +37,12 @@ created from the repository default branch. The local provider stores files in
 deployment that must survive a host restart, set `RUNTIME_LOCAL_ROOT` to a
 durable, app-private directory owned by the Runtime service account (mode 0700);
 the temporary-directory default is for local development only.
+
+## M4 Modal workspaces
+
+Set `RUNTIME_PROVIDER=modal`, `MODAL_TOKEN_ID`, and `MODAL_TOKEN_SECRET` to
+run the workspace lifecycle on Modal. Runtime creates a named Modal Volume per
+workspace and mounts it at `/runtime`; the Volume retains the clone and
+worktree after the 24-hour Modal Sandbox expires. The provider builds a Node
+22 image with Git and Claude Code, creates an isolated worktree, installs
+dependencies, and verifies both Git and Claude Code before reporting ready.

@@ -96,7 +96,8 @@ async function runChecks(): Promise<Check[]> {
         optionalEnv("MODAL_TOKEN_ID") && optionalEnv("MODAL_TOKEN_SECRET")
           ? "ok"
           : "missing",
-      detail: "Needed from M4. Until then RUNTIME_PROVIDER=local is used.",
+      detail:
+        "Set both values, then use RUNTIME_PROVIDER=modal to create Volume-backed cloud workspaces.",
     },
   ];
 }

@@ -1,5 +1,6 @@
 import { providerName } from "@/lib/env";
 import { LocalRuntimeProvider } from "@/lib/runtime/local-provider";
+import { ModalRuntimeProvider } from "@/lib/runtime/modal-provider";
 import type { RuntimeProvider } from "@/lib/runtime/types";
 
 let cached: RuntimeProvider | null = null;
@@ -15,11 +16,8 @@ export function getRuntimeProvider(): RuntimeProvider {
   if (cached) return cached;
 
   if (providerName() === "modal") {
-    // Loaded lazily so the Modal SDK and its credentials are never required
-    // in local development.
-    throw new Error(
-      "Modal provider is not implemented yet (milestone M4). Set RUNTIME_PROVIDER=local.",
-    );
+    cached = new ModalRuntimeProvider();
+    return cached;
   }
 
   cached = new LocalRuntimeProvider();
