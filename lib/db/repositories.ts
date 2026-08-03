@@ -118,7 +118,7 @@ export async function createWorkspaceRow(input: {
   projectId: string;
   branch: string;
   baseBranch: string;
-  provider: string;
+  provider: "local" | "modal";
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
