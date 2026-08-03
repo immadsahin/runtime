@@ -15,6 +15,7 @@ export function toProject(row: Tables["projects"]["Row"]): Project {
     private: row.is_private,
     language: row.language,
     description: row.description,
+    htmlUrl: row.html_url ?? `https://github.com/${row.full_name}`,
     pushedAt: row.pushed_at,
     linearIssueIds: (row.linear_issues ?? []).map((i) => i.id),
     createdAt: row.created_at,

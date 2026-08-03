@@ -21,6 +21,8 @@ export type Project = {
   private: boolean;
   language: string | null;
   description: string | null;
+  /** Canonical GitHub repository page. */
+  htmlUrl: string;
   pushedAt: string | null;
   /** Linear issues attached to this project (never standalone projects). */
   linearIssueIds: string[];
