@@ -57,6 +57,8 @@ export type ProvisionPhase =
 export type Workspace = {
   id: string;
   projectId: string;
+  /** Backend that owns this workspace's compute and durable storage. */
+  provider: "local" | "modal";
   status: WorkspaceStatus;
   phase: ProvisionPhase | null;
   /** Branch checked out in the git worktree. */

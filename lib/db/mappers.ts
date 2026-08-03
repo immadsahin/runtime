@@ -27,6 +27,7 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
   return {
     id: row.id,
     projectId: row.project_id,
+    provider: row.provider === "modal" ? "modal" : "local",
     status: row.status,
     phase: row.phase,
     branch: row.branch,

@@ -8,11 +8,12 @@ import {
 } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
+import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { getProject } from "@/lib/db/repositories";
+import { getProject, listWorkspaces } from "@/lib/db/repositories";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,7 @@ export default async function ProjectPage({
   const { id } = await params;
   const project = await getProject(id);
   if (!project) notFound();
+  const workspaces = await listWorkspaces(project.id);
 
   return (
     <AppShell active="/">
@@ -81,15 +83,70 @@ export default async function ProjectPage({
         </CardContent>
       </Card>
 
-      <Card className="mt-5 max-w-2xl border-dashed">
-        <CardContent className="py-2 text-sm">
-          <p className="font-medium">Workspaces arrive next</p>
-          <p className="text-muted-foreground mt-1 text-xs">
-            Runtime will create a persistent workspace from this repository in
-            the next milestone.
-          </p>
+      <Card className="mt-5 max-w-2xl">
+        <CardHeader>
+          <CardTitle className="text-base">New workspace</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CreateWorkspaceForm
+            projectId={project.id}
+            defaultBranch={project.defaultBranch}
+          />
         </CardContent>
       </Card>
+
+      <section className="mt-8 max-w-2xl">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold">Workspaces</h2>
+          <span className="text-muted-foreground text-xs">
+            {workspaces.length === 1
+              ? "1 active workspace"
+              : `${workspaces.length} active workspaces`}
+          </span>
+        </div>
+        {workspaces.length === 0 ? (
+          <Card className="border-dashed">
+            <CardContent className="py-2 text-sm">
+              <p className="font-medium">No workspaces yet</p>
+              <p className="text-muted-foreground mt-1 text-xs">
+                Create one to clone this repository into an isolated local
+                worktree.
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {workspaces.map((workspace) => (
+              <Link
+                className="block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                href={`/workspaces/${workspace.id}`}
+                key={workspace.id}
+              >
+                <Card className="transition-colors hover:bg-accent/40">
+                  <CardContent className="flex items-center justify-between gap-4 py-2">
+                    <div>
+                      <p className="font-mono text-sm">{workspace.branch}</p>
+                      <p className="text-muted-foreground mt-1 text-xs">
+                        {workspace.phase ? `Phase: ${workspace.phase.replaceAll("_", " ")}` : "Waiting to start"}
+                      </p>
+                    </div>
+                    <WorkspaceStatusBadge status={workspace.status} />
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
     </AppShell>
+  );
+}
+
+function WorkspaceStatusBadge({ status }: { status: string }) {
+  const variant = status === "ready" ? "default" : "outline";
+  return (
+    <Badge variant={variant} className="font-mono text-[11px] capitalize">
+      {status}
+    </Badge>
   );
 }
