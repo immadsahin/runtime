@@ -7,7 +7,12 @@ const nextConfig: NextConfig = {
    * plus the dev error overlay stop working when the app is opened through the
    * preview tunnel rather than localhost.
    */
-  allowedDevOrigins: ["127.0.0.1", "localhost", "*.modal.host"],
+  allowedDevOrigins: [
+    "127.0.0.1",
+    "localhost",
+    "*.modal.host",
+    "*.preview.usehoplite.com",
+  ],
 
   images: {
     // GitHub avatar served for the signed-in owner in the app shell.

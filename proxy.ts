@@ -9,6 +9,21 @@ import { NextResponse, type NextRequest } from "next/server";
  * the browser still looks logged in.
  */
 export async function proxy(request: NextRequest) {
+  // Older Supabase redirect settings can send the authorization code to the
+  // site root instead of the requested `/auth/callback` URL. Recover it at
+  // the edge before rendering the page (or refreshing a session), so the code
+  // always reaches the PKCE exchange handler rather than producing a generic
+  // application error at `/?code=…`.
+  if (
+    request.nextUrl.pathname === "/" &&
+    (request.nextUrl.searchParams.has("code") ||
+      request.nextUrl.searchParams.has("error"))
+  ) {
+    const callback = request.nextUrl.clone();
+    callback.pathname = "/auth/callback";
+    return NextResponse.redirect(callback);
+  }
+
   let response = NextResponse.next({ request });
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;

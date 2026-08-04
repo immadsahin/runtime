@@ -1,10 +1,4 @@
-"use client";
-
-import { useState } from "react";
-import { Loader2 } from "lucide-react";
-
 import { Button } from "@/components/ui/button";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 /** The GitHub "Octocat" mark. Inlined so it does not depend on a lucide icon. */
 function GitHubMark() {
@@ -16,49 +10,16 @@ function GitHubMark() {
 }
 
 /**
- * Starts the GitHub OAuth (PKCE) flow from the browser. Supabase stores the
- * code verifier in a cookie and redirects to GitHub; the `/auth/callback`
- * route completes the exchange and enforces the owner allowlist.
- *
- * OAuth is used for identity only — repository access uses a separate PAT —
- * so the requested scopes are the minimum needed to read the account login.
+ * A regular link keeps the OAuth entry point functional before client-side
+ * JavaScript hydrates and when the app runs inside an embedded preview.
  */
 export function SignInButton({ next = "/" }: { next?: string }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function signIn() {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
-
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "github",
-        options: { redirectTo, scopes: "read:user user:email" },
-      });
-
-      // On success the browser navigates away, so we only reach here on failure.
-      if (error) throw error;
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not start sign-in.");
-      setLoading(false);
-    }
-  }
-
   return (
-    <div className="space-y-2">
-      <Button onClick={signIn} disabled={loading} size="lg" className="w-full">
-        {loading ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          <GitHubMark />
-        )}
+    <Button asChild size="lg" className="w-full">
+      <a href={`/auth/signin?next=${encodeURIComponent(next)}`}>
+        <GitHubMark />
         Continue with GitHub
-      </Button>
-      {error && <p className="text-destructive text-xs">{error}</p>}
-    </div>
+      </a>
+    </Button>
   );
 }

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { isOwner } from "@/lib/auth/owner";
 import { safeRelativePath } from "@/lib/auth/redirect";
 import { optionalEnv } from "@/lib/env";
+import { hoplitePreviewOrigin } from "@/lib/http/preview-origin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -52,6 +53,14 @@ export async function GET(request: Request) {
  * redirect. Local development may safely use the request origin.
  */
 function redirectBase(_request: Request, requestUrl: URL): string {
+  const previewOrigin = hoplitePreviewOrigin(_request);
+  if (previewOrigin) return previewOrigin;
+
+  // On a local development server, the request origin is authoritative. This
+  // avoids a stale production value (for example `localhost:3100`) sending an
+  // OAuth response to a different local server than the one that started it.
+  if (process.env.NODE_ENV !== "production") return requestUrl.origin;
+
   const configured = optionalEnv("RUNTIME_BASE_URL");
   if (configured) {
     const url = new URL(configured);
@@ -61,10 +70,7 @@ function redirectBase(_request: Request, requestUrl: URL): string {
     return url.origin;
   }
 
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("RUNTIME_BASE_URL must be set in production.");
-  }
-  return requestUrl.origin;
+  throw new Error("RUNTIME_BASE_URL must be set in production.");
 }
 
 function signInError(base: string, reason: string): NextResponse {
