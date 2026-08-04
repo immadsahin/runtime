@@ -16,11 +16,18 @@ const nav = [
 export async function AppShell({
   children,
   active = "/",
+  immersive = false,
 }: {
   children: React.ReactNode;
   active?: string;
+  /** Workspace studio owns the entire viewport rather than the legacy header. */
+  immersive?: boolean;
 }) {
   const owner = await getOwnerSafe();
+
+  if (immersive) {
+    return <main className="min-h-screen">{children}</main>;
+  }
 
   return (
     <div className="flex min-h-screen flex-col">
