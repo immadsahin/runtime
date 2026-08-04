@@ -73,8 +73,41 @@ export type Workspace = {
   sandboxId: string | null;
   /** Durable storage handle (Modal Volume) that survives sandbox death. */
   volumeName: string | null;
+  /** Runtime Computer this workspace runs on; null when not yet attached. */
+  computerId: string | null;
+  /** tmux session name on the Runtime Computer that hosts this Claude session. */
+  tmuxSession: string | null;
+  /** Agent-side workspace identifier, as known to the runtime-agent. */
+  agentWorkspaceId: string | null;
   lastActiveAt: string | null;
   errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/**
+ * Runtime Computer: one long-lived Daytona Ubuntu box per Project, built from a
+ * frozen versioned image. Provisioned lazily on the first workspace and kept
+ * warm. Workspaces run inside it as tmux sessions.
+ */
+export type RuntimeComputerStatus =
+  | "provisioning"
+  | "ready"
+  | "error"
+  | "stopped";
+
+export type RuntimeComputer = {
+  id: string;
+  projectId: string;
+  status: RuntimeComputerStatus;
+  /** Frozen image tag this box was built from, e.g. `v1`. */
+  imageVersion: string;
+  /** Daytona sandbox id; null until compute is provisioned. */
+  daytonaSandboxId: string | null;
+  /** Base of the Daytona preview URL the runtime-agent is reachable at. */
+  agentBaseUrl: string | null;
+  errorMessage: string | null;
+  lastActiveAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
