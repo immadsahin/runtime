@@ -1,6 +1,7 @@
 import { ModalClient, NotFoundError, type Sandbox, type Secret, type Volume } from "modal";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
+import { agentCommand } from "@/lib/runtime/agent";
 import type {
   ChangedFile,
   CommitWorkspaceInput,
@@ -21,6 +22,11 @@ import type {
 
 const WORKSPACE_ROOT = "/runtime";
 const SANDBOX_TIMEOUT_MS = 86_400_000;
+
+export const MODAL_IMAGE_COMMANDS = [
+  "RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates git && rm -rf /var/lib/apt/lists/*",
+  "RUN npm install -g @anthropic-ai/claude-code @openai/codex",
+] as const;
 
 /**
  * Production backend for Runtime workspaces.
@@ -95,6 +101,7 @@ export class ModalRuntimeProvider implements RuntimeProvider {
 
       await input.onPhase?.("claude_ready");
       await run(sandbox, ["claude", "--version"]);
+      await run(sandbox, ["codex", "--version"]);
 
       const result = {
         sandboxId: sandbox.sandboxId,
@@ -154,7 +161,7 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     const secret = await this.secretFor(input.env);
     await run(
       sandbox,
-      ["bash", "-lc", modalDetachedJobScript(claudeCommand(input), logPath, resultPath)],
+      ["bash", "-lc", modalDetachedJobScript(agentCommand(input.agent, input), logPath, resultPath)],
       { secrets: secret ? [secret] : undefined },
     );
     sandbox.detach();
@@ -316,10 +323,7 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     });
     const image = this.client.images
       .fromRegistry("node:22-bookworm")
-      .dockerfileCommands([
-        "RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates git && rm -rf /var/lib/apt/lists/*",
-        "RUN npm install -g @anthropic-ai/claude-code",
-      ]);
+      .dockerfileCommands([...MODAL_IMAGE_COMMANDS]);
     return this.client.sandboxes.create(app, image, {
       command: ["sleep", "86400"],
       cpu: 2,
@@ -419,23 +423,6 @@ function shellQuote(value: string): string {
 
 function modalWorktree(): string {
   return '"$(find /runtime/worktrees -mindepth 1 -maxdepth 1 -type d -print -quit)"';
-}
-
-function claudeCommand(input: ExecuteJobInput): string {
-  const args = [
-    "claude",
-    "-p",
-    shellQuote(input.prompt),
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--permission-mode",
-    "bypassPermissions",
-    "--allowedTools",
-    shellQuote("Read,Edit,Write,Bash,Glob,Grep"),
-  ];
-  if (input.resumeSessionId) args.push("--resume", shellQuote(input.resumeSessionId));
-  return args.join(" ");
 }
 
 function modalDetachedJobScript(command: string, logPath: string, resultPath: string): string {

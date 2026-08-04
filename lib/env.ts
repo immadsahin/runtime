@@ -25,6 +25,8 @@ type EnvKey =
   // Claude Code
   | "ANTHROPIC_API_KEY"
   | "CLAUDE_CODE_OAUTH_TOKEN"
+  // Codex
+  | "CODEX_API_KEY"
   // Provider selection
   | "RUNTIME_PROVIDER"
   | "RUNTIME_BASE_URL";

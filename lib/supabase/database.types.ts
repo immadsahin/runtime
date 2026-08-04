@@ -41,6 +41,8 @@ export type JobStatusDb =
   | "failed"
   | "cancelled";
 
+export type JobAgentDb = "claude" | "codex";
+
 export type LinearIssueRef = {
   id: string;
   identifier: string;
@@ -90,6 +92,7 @@ type JobRow = {
   id: string;
   owner_id: string;
   workspace_id: string;
+  agent: JobAgentDb;
   status: JobStatusDb;
   prompt: string;
   log_path: string | null;

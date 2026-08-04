@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { Job, JobStatus } from "@/lib/runtime/types";
+import type { Job, JobAgent, JobStatus } from "@/lib/runtime/types";
 
 const MAX_LOG_CHARS = 200_000;
 
@@ -34,6 +34,7 @@ export function WorkspaceJobPanel({
 }) {
   const router = useRouter();
   const [prompt, setPrompt] = useState("");
+  const [agent, setAgent] = useState<JobAgent>("claude");
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // Keyed by job id so switching jobs shows a fresh log without a synchronous
@@ -73,7 +74,7 @@ export function WorkspaceJobPanel({
           const response = await fetch(`/api/workspaces/${workspaceId}/jobs`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: task }),
+            body: JSON.stringify({ agent, prompt: task }),
           });
           const result = (await response.json().catch(() => ({}))) as {
             job?: { id: string };
@@ -94,7 +95,7 @@ export function WorkspaceJobPanel({
         }
       })();
     },
-    [prompt, submitting, workspaceId, router],
+    [agent, prompt, submitting, workspaceId, router],
   );
 
   const disabled = !canRun || Boolean(activeJob) || submitting;
@@ -102,14 +103,26 @@ export function WorkspaceJobPanel({
   return (
     <div className="space-y-4">
       <form className="space-y-2" onSubmit={submit}>
+        <label className="text-sm font-medium" htmlFor="job-agent">Coding agent</label>
+        <select
+          aria-label="Coding agent"
+          className="border-input bg-background h-9 rounded-md border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={disabled}
+          id="job-agent"
+          onChange={(event) => setAgent(event.target.value as JobAgent)}
+          value={agent}
+        >
+          <option value="claude">Claude Code</option>
+          <option value="codex">Codex</option>
+        </select>
         <Textarea
-          aria-label="Task for Claude Code"
+          aria-label={`Task for ${agent === "claude" ? "Claude Code" : "Codex"}`}
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           placeholder={
             canRun
-              ? "Describe a task for Claude Code to run in this workspace…"
-              : "The workspace must be ready before Claude Code can run."
+              ? `Describe a task for ${agent === "claude" ? "Claude Code" : "Codex"} to run in this workspace…`
+              : "The workspace must be ready before a coding agent can run."
           }
           disabled={disabled}
           maxLength={20_000}
@@ -119,7 +132,7 @@ export function WorkspaceJobPanel({
         <div className="flex flex-wrap items-center gap-3">
           <Button disabled={disabled || prompt.trim().length === 0} size="sm" type="submit">
             {submitting ? <LoaderCircle className="animate-spin" /> : <Play />}
-            {submitting ? "Starting" : "Run Claude Code"}
+            {submitting ? "Starting" : `Run ${agent === "claude" ? "Claude Code" : "Codex"}`}
           </Button>
           {activeJob && (
             <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
@@ -149,7 +162,7 @@ export function WorkspaceJobPanel({
 function JobHistory({ jobs }: { jobs: Job[] }) {
   if (jobs.length === 0) {
     return (
-      <p className="text-muted-foreground text-xs">No Claude jobs have run yet.</p>
+      <p className="text-muted-foreground text-xs">No coding-agent jobs have run yet.</p>
     );
   }
   return (
@@ -157,9 +170,12 @@ function JobHistory({ jobs }: { jobs: Job[] }) {
       {jobs.map((job) => (
         <li className="rounded-md border px-3 py-2 text-sm" key={job.id}>
           <div className="flex items-center justify-between gap-2">
-            <Badge variant={statusVariant[job.status]} className="font-mono capitalize">
-              {job.status}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="font-mono capitalize">{job.agent}</Badge>
+              <Badge variant={statusVariant[job.status]} className="font-mono capitalize">
+                {job.status}
+              </Badge>
+            </div>
             <span className="text-muted-foreground text-xs" suppressHydrationWarning>
               {formatWhen(job.finishedAt ?? job.startedAt ?? job.createdAt)}
               {typeof job.costUsd === "number" ? ` · $${job.costUsd.toFixed(2)}` : ""}

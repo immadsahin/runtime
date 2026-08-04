@@ -86,9 +86,13 @@ export type JobStatus =
   | "failed"
   | "cancelled";
 
+/** Coding agent that owns one detached job invocation. */
+export type JobAgent = "claude" | "codex";
+
 export type Job = {
   id: string;
   workspaceId: string;
+  agent: JobAgent;
   status: JobStatus;
   prompt: string;
   /** Log file path on durable storage, tailed by streamLogs. */
@@ -153,6 +157,7 @@ export type ExecuteJobInput = {
   workspaceId: string;
   sandboxId: string;
   jobId: string;
+  agent: JobAgent;
   prompt: string;
   /** Narrow Claude credential set, injected only for this command. */
   env: Record<string, string>;

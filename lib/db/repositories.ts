@@ -2,6 +2,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { toJob, toProject, toWorkspace, toWorkspacePullRequest } from "@/lib/db/mappers";
 import type {
   Job,
+  JobAgent,
   JobStatus,
   Project,
   ProvisionPhase,
@@ -263,6 +264,7 @@ export async function getJob(id: string): Promise<Job | null> {
 export async function createJobRow(input: {
   ownerId: string;
   workspaceId: string;
+  agent: JobAgent;
   prompt: string;
   linearIssueId?: string | null;
 }): Promise<Job> {
@@ -272,6 +274,7 @@ export async function createJobRow(input: {
     .insert({
       owner_id: input.ownerId,
       workspace_id: input.workspaceId,
+      agent: input.agent,
       prompt: input.prompt,
       linear_issue_id: input.linearIssueId ?? null,
       status: "queued",
