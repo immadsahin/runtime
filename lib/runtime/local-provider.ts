@@ -5,17 +5,22 @@ import os from "node:os";
 import path from "node:path";
 
 import type {
+  ChangedFile,
+  CommitWorkspaceInput,
+  CommitWorkspaceResult,
   CreatePullRequestInput,
   CreatePullRequestResult,
   CreateWorkspaceInput,
   CreateWorkspaceResult,
   ExecuteJobInput,
   ExecuteJobResult,
+  JobPaths,
+  JobResult,
   LogChunk,
+  PushWorkspaceBranchInput,
   RuntimeProvider,
   StreamLogsInput,
 } from "@/lib/runtime/types";
-import { workspaceRuntimeEnvironment } from "@/lib/runtime/workspace-environment";
 
 const ROOT =
   process.env.RUNTIME_LOCAL_ROOT ?? path.join(os.tmpdir(), "runtime-local");
@@ -161,22 +166,27 @@ export class LocalRuntimeProvider implements RuntimeProvider {
   async executeJob(input: ExecuteJobInput): Promise<ExecuteJobResult> {
     const p = this.paths(input.workspaceId);
     await fs.mkdir(p.logs, { recursive: true });
-    const logPath = path.join(p.logs, `${input.jobId}.log`);
+    const { logPath, resultPath } = this.getJobPaths(input);
     await fs.writeFile(logPath, "");
-    const workspaceEnv = workspaceRuntimeEnvironment();
-    if (Object.keys(workspaceEnv).length > 0) {
+    await fs.rm(resultPath, { force: true });
+    if (Object.keys(input.env).length > 0) {
       await fs.mkdir(path.dirname(p.env), { recursive: true });
-      await writeEnvironmentFile(p.env, workspaceEnv);
+      await writeEnvironmentFile(p.env, input.env);
     }
 
     const worktree = await firstWorktree(p.worktrees);
+    const completion = completionScript(
+      claudeCommand(input),
+      logPath,
+      resultPath,
+    );
 
     // Detached: the job outlives this HTTP request, exactly like Modal.
     const child = spawn(
       "bash",
       [
         "-lc",
-        `${sourceEnvironmentCommand(p.env, true)} ${claudeCommand(input)} >> ${shellQuote(logPath)} 2>&1`,
+        `${sourceEnvironmentCommand(p.env, true)} ${completion}`,
       ],
       {
         cwd: worktree ?? p.base,
@@ -187,16 +197,56 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     );
     child.unref();
 
-    return { logPath };
+    return { logPath, resultPath, executionHandle: String(child.pid ?? "") };
+  }
+
+  getJobPaths(input: { workspaceId: string; jobId: string }): JobPaths {
+    const logs = this.paths(input.workspaceId).logs;
+    return {
+      logPath: path.join(logs, `${input.jobId}.log`),
+      resultPath: path.join(logs, `${input.jobId}.result.json`),
+    };
+  }
+
+  async getJobResult(input: {
+    workspaceId: string;
+    jobId: string;
+    resultPath: string;
+  }): Promise<JobResult | null> {
+    const p = this.paths(input.workspaceId);
+    const expected = path.join(p.logs, `${input.jobId}.result.json`);
+    if (path.resolve(input.resultPath) !== path.resolve(expected)) {
+      throw new Error("Invalid job result path");
+    }
+    try {
+      const metadata = await fs.lstat(expected);
+      if (!metadata.isFile() || metadata.isSymbolicLink()) {
+        throw new Error("Job result is not a regular provider-owned file");
+      }
+      const parsed = JSON.parse(await fs.readFile(expected, "utf8")) as unknown;
+      return isJobResult(parsed) ? parsed : null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
   }
 
   async *streamLogs(input: StreamLogsInput): AsyncIterable<LogChunk> {
+    const p = this.paths(input.workspaceId);
+    const expected = path.join(p.logs, `${input.jobId}.log`);
+    if (path.resolve(input.logPath) !== path.resolve(expected)) {
+      throw new Error("Invalid job log path");
+    }
     let offset = input.fromOffset ?? 0;
 
     while (!input.signal?.aborted) {
       let size = 0;
       try {
-        size = (await fs.stat(input.logPath)).size;
+        const metadata = await fs.lstat(expected);
+        if (!metadata.isFile() || metadata.isSymbolicLink()) {
+          throw new Error("Job log is not a regular provider-owned file");
+        }
+        size = metadata.size;
       } catch {
         await sleep(500);
         continue;
@@ -224,34 +274,88 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     });
   }
 
+  async listChangedFiles(input: {
+    workspaceId: string;
+  }): Promise<ChangedFile[]> {
+    const worktree = await this.requireWorktree(input.workspaceId);
+    const output = await run(
+      "git",
+      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      { cwd: worktree },
+    );
+    return parseChangedFiles(output);
+  }
+
+  async readChangedFileDiff(input: {
+    workspaceId: string;
+    path: string;
+  }): Promise<string> {
+    const worktree = await this.requireWorktree(input.workspaceId);
+    const changed = await this.listChangedFiles({ workspaceId: input.workspaceId });
+    if (!changed.some((file) => file.path === input.path)) {
+      throw new Error("File is not part of this workspace change set");
+    }
+    if (!isSafeRelativePath(input.path)) {
+      throw new Error("Invalid changed file path");
+    }
+    if (changed.find((file) => file.path === input.path)?.status === "untracked") {
+      return "This untracked file has no Git diff yet.";
+    }
+    const diff = await run(
+      "git",
+      ["--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--", input.path],
+      { cwd: worktree },
+    );
+    return limitText(diff, 200_000);
+  }
+
+  async commitWorkspace(input: CommitWorkspaceInput): Promise<CommitWorkspaceResult> {
+    const worktree = await this.requireWorktree(input.workspaceId);
+    await run("git", ["add", "-A"], { cwd: worktree });
+    await run("git", ["commit", "-m", input.message], {
+      cwd: worktree,
+      env: safeChildEnvironment({
+        GIT_AUTHOR_NAME: input.author.name,
+        GIT_AUTHOR_EMAIL: input.author.email,
+        GIT_COMMITTER_NAME: input.author.name,
+        GIT_COMMITTER_EMAIL: input.author.email,
+      }),
+    });
+    const sha = (await run("git", ["rev-parse", "HEAD"], { cwd: worktree })).trim();
+    return { sha };
+  }
+
+  async pushWorkspaceBranch(input: PushWorkspaceBranchInput): Promise<void> {
+    const worktree = await this.requireWorktree(input.workspaceId);
+    const remote = `https://github.com/${input.repoFullName}.git`;
+    const gitAuth = await createGitAskPass(this.paths(input.workspaceId).base, input.githubToken);
+    try {
+      await run("git", ["remote", "set-url", "origin", remote], { cwd: worktree });
+      await run("git", [
+        "-c", "core.hooksPath=/dev/null",
+        "-c", "credential.helper=",
+        "push", "-u", "origin", input.branch,
+      ], {
+        cwd: worktree,
+        env: gitAuth.env,
+      });
+    } finally {
+      await gitAuth.remove();
+      await run("git", ["remote", "set-url", "origin", remote], { cwd: worktree });
+    }
+  }
+
   async createPullRequest(
     input: CreatePullRequestInput,
   ): Promise<CreatePullRequestResult> {
-    const p = this.paths(input.workspaceId);
-    const worktree = await firstWorktree(p.worktrees);
+    void input;
+    throw new Error("Pull requests are created through Runtime's GitHub API path.");
+  }
+
+  private async requireWorktree(workspaceId: string): Promise<string> {
+    const worktree = await firstWorktree(this.paths(workspaceId).worktrees);
     if (!worktree) throw new Error("No worktree found for workspace");
-
-    await run("git", ["push", "-u", "origin", input.branch], { cwd: worktree });
-    const out = await run(
-      "gh",
-      [
-        "pr",
-        "create",
-        "--title",
-        input.title,
-        "--body",
-        input.body,
-        "--base",
-        input.baseBranch,
-        "--head",
-        input.branch,
-      ],
-      { cwd: worktree },
-    );
-
-    const url = out.trim().split("\n").at(-1) ?? "";
-    const number = Number(url.split("/").at(-1) ?? 0);
-    return { url, number };
+    return worktree;
   }
 }
 
@@ -411,7 +515,7 @@ async function createGitAskPass(base: string, token: string) {
   };
 }
 
-function safeChildEnvironment(additions?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function safeChildEnvironment(additions?: Record<string, string>): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {
     NODE_ENV: process.env.NODE_ENV ?? "production",
   };
@@ -420,6 +524,68 @@ function safeChildEnvironment(additions?: NodeJS.ProcessEnv): NodeJS.ProcessEnv 
     if (value !== undefined) environment[key] = value;
   }
   return additions ? Object.assign(environment, additions) : environment;
+}
+
+function completionScript(command: string, logPath: string, resultPath: string): string {
+  const log = shellQuote(logPath);
+  const result = shellQuote(resultPath);
+  return [
+    "umask 077",
+    "set +e",
+    `${command} >> ${log} 2>&1`,
+    "exit_code=$?",
+    'if [ "$exit_code" -eq 0 ]; then result_status=succeeded; else result_status=failed; fi',
+    `printf '{"status":"%s","exitCode":%s,"finishedAt":"%s"}\n' "$result_status" "$exit_code" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ${result}`,
+    "exit 0",
+  ].join("; ");
+}
+
+function isJobResult(value: unknown): value is JobResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return (
+    (result.status === "succeeded" || result.status === "failed" || result.status === "cancelled") &&
+    (typeof result.exitCode === "number" || result.exitCode === null) &&
+    typeof result.finishedAt === "string"
+  );
+}
+
+function parseChangedFiles(output: string): ChangedFile[] {
+  const entries = output.split("\0").filter(Boolean);
+  const files: ChangedFile[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const code = entry.slice(0, 2);
+    const filePath = entry.slice(3);
+    if (!filePath) continue;
+    if (code[0] === "R" || code[0] === "C" || code[1] === "R" || code[1] === "C") {
+      index += 1; // porcelain v1 -z emits the original name as the next field.
+    }
+    const status: ChangedFile["status"] =
+      code === "??" ? "untracked" :
+      code.includes("A") ? "added" :
+      code.includes("D") ? "deleted" :
+      code.includes("R") || code.includes("C") ? "renamed" : "modified";
+    files.push({ path: filePath, status, additions: 0, deletions: 0 });
+  }
+  return files.slice(0, 500);
+}
+
+function limitText(value: string, maxBytes: number): string {
+  return Buffer.byteLength(value, "utf8") <= maxBytes
+    ? value
+    : `${Buffer.from(value, "utf8").subarray(0, maxBytes).toString("utf8")}\n\n… diff truncated by Runtime …`;
+}
+
+/** Reject traversal and Git pathspec magic before invoking Git with a user selection. */
+function isSafeRelativePath(filePath: string): boolean {
+  return (
+    Boolean(filePath) &&
+    !filePath.includes("\0") &&
+    !path.isAbsolute(filePath) &&
+    !filePath.startsWith(":") &&
+    filePath.split(/[\\/]/).every((part) => part !== "" && part !== "." && part !== "..")
+  );
 }
 
 function errorMessage(error: unknown): string {

@@ -93,6 +93,8 @@ type JobRow = {
   status: JobStatusDb;
   prompt: string;
   log_path: string | null;
+  result_path: string | null;
+  execution_handle: string | null;
   log_bytes: number;
   exit_code: number | null;
   session_id: string | null;
@@ -102,6 +104,18 @@ type JobRow = {
   finished_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type PullRequestRow = {
+  id: string;
+  owner_id: string;
+  workspace_id: string;
+  github_number: number;
+  url: string;
+  title: string;
+  base_branch: string;
+  head_branch: string;
+  created_at: string;
 };
 
 /** Columns the client may supply on insert (defaults fill the rest). */
@@ -141,6 +155,23 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "jobs_owner_workspace_fkey";
+            columns: ["owner_id", "workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["owner_id", "id"];
+          },
+        ];
+      };
+      pull_requests: {
+        Row: PullRequestRow;
+        Insert: Insert<
+          PullRequestRow,
+          "owner_id" | "workspace_id" | "github_number" | "url" | "title" | "base_branch" | "head_branch"
+        >;
+        Update: Partial<PullRequestRow>;
+        Relationships: [
+          {
+            foreignKeyName: "pull_requests_owner_workspace_fkey";
             columns: ["owner_id", "workspace_id"];
             isOneToOne: false;
             referencedRelation: "workspaces";

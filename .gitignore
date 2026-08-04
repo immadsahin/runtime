@@ -42,3 +42,4 @@ next-env.d.ts
 
 # agent scratch artifacts (screenshots, recordings)
 /.artifacts/
+/.hoplite/archive/

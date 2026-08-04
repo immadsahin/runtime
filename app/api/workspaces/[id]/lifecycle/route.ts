@@ -9,7 +9,6 @@ import {
 import { optionalEnv } from "@/lib/env";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
-import { workspaceRuntimeEnvironment } from "@/lib/runtime/workspace-environment";
 
 export const dynamic = "force-dynamic";
 
@@ -150,7 +149,7 @@ async function resumeWorkspace(workspace: Workspace, provider: RuntimeProvider) 
     const result = await provider.resumeWorkspace({
       workspaceId: workspace.id,
       volumeName: workspace.volumeName,
-      env: workspaceRuntimeEnvironment(),
+      env: {},
     });
     sandboxId = result.sandboxId;
   } catch (error) {

@@ -1,7 +1,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /** Every application table required for Runtime's initial control plane. */
-export const RUNTIME_TABLES = ["projects", "workspaces", "jobs"] as const;
+export const RUNTIME_TABLES = ["projects", "workspaces", "jobs", "pull_requests"] as const;
 
 export type RuntimeTable = (typeof RUNTIME_TABLES)[number];
 export type TableProbeStatus = "ok" | "missing" | "unreachable";

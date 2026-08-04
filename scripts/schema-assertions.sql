@@ -116,7 +116,31 @@ begin
   raise notice 'ok: updated_at trigger fires';
 end $$;
 
--- 11. RLS isolates rows by owner.
+-- 11. Pull requests are owner-scoped and one-to-one with a workspace.
+insert into pull_requests (
+  owner_id, workspace_id, github_number, url, title, base_branch, head_branch
+)
+select
+  '11111111-1111-1111-1111-111111111111', id, 7,
+  'https://github.com/immadsahin/runtime/pull/7', 'Runtime test', 'main', 'feat/x'
+from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+
+do $$
+declare workspace uuid;
+begin
+  select id into workspace from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+  insert into pull_requests (
+    owner_id, workspace_id, github_number, url, title, base_branch, head_branch
+  ) values (
+    '11111111-1111-1111-1111-111111111111', workspace, 8,
+    'https://github.com/immadsahin/runtime/pull/8', 'Duplicate', 'main', 'feat/x'
+  );
+  raise exception 'FAIL: duplicate workspace pull request was allowed';
+exception when unique_violation then
+  raise notice 'ok: one pull request per workspace enforced';
+end $$;
+
+-- 12. RLS isolates rows by owner.
 do $do$
 begin
   if not exists (select 1 from pg_roles where rolname = 'authed') then
@@ -144,10 +168,14 @@ begin
   if n <> 0 then
     raise exception 'FAIL: RLS leaked % job rows', n;
   end if;
+  select count(*) into n from pull_requests where owner_id = '11111111-1111-1111-1111-111111111111';
+  if n <> 0 then
+    raise exception 'FAIL: RLS leaked % pull request rows', n;
+  end if;
   raise notice 'ok: RLS hides other owners'' rows';
 end $$;
 
--- 12. RLS rejects inserts that forge another owner.
+-- 13. RLS rejects inserts that forge another owner.
 do $$
 begin
   insert into projects (owner_id, github_repo_id, full_name, owner, name)

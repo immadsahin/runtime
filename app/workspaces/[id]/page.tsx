@@ -5,9 +5,12 @@ import { CheckCircle2, CircleDashed, FolderGit2, GitBranch, HardDrive, TriangleA
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { WorkspaceChanges } from "@/components/workspace-changes";
+import { WorkspaceJobPanel } from "@/components/workspace-job-panel";
 import { WorkspaceLifecycleControls } from "@/components/workspace-lifecycle-controls";
+import { WorkspacePublishPanel } from "@/components/workspace-publish-panel";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { getProject, getWorkspace } from "@/lib/db/repositories";
+import { getProject, getWorkspace, getWorkspacePullRequest, listJobs } from "@/lib/db/repositories";
 import type { ProvisionPhase } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +37,11 @@ export default async function WorkspacePage({
   if (!workspace) notFound();
   const project = await getProject(workspace.projectId);
   if (!project) notFound();
+  const [jobs, pullRequest] = await Promise.all([
+    listJobs(workspace.id),
+    getWorkspacePullRequest(workspace.id),
+  ]);
+  const workspaceActive = workspace.status === "ready" || workspace.status === "idle";
 
   const phaseIndex = workspace.phase ? phases.findIndex((phase) => phase.id === workspace.phase) : -1;
 
@@ -111,6 +119,44 @@ export default async function WorkspacePage({
           </Card>
         </div>
       </div>
+
+      <div className="mt-5 grid max-w-4xl gap-5 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Claude Code</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <WorkspaceJobPanel
+              canRun={workspaceActive}
+              jobs={jobs}
+              workspaceId={workspace.id}
+            />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Publish</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <WorkspacePublishPanel
+              active={workspaceActive}
+              baseBranch={workspace.baseBranch}
+              branch={workspace.branch}
+              pullRequest={pullRequest}
+              workspaceId={workspace.id}
+            />
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="mt-5 max-w-4xl">
+        <CardHeader>
+          <CardTitle className="text-base">Changes</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <WorkspaceChanges active={workspaceActive} workspaceId={workspace.id} />
+        </CardContent>
+      </Card>
     </AppShell>
   );
 }

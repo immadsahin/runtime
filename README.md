@@ -15,9 +15,15 @@ actual worktree and process lifecycle.
 - **M5:** Resume, suspend, and permanently destroy workspaces through
   owner-gated browser controls. Suspension releases compute while keeping the
   worktree; destruction removes both compute and durable storage.
-
-Claude jobs, logs, diffs, and pull requests intentionally come in later
-milestones.
+- **M6:** Run one detached Claude Code task per active workspace. Provider-owned
+  completion records keep job state recoverable after a page refresh or request
+  ends.
+- **M7:** Stream resumable, redacted Claude logs to the workspace page using
+  server-sent events.
+- **M8:** Review the current changed-file list and bounded, text-only diffs
+  before publishing.
+- **M9:** Commit the worktree as the authenticated GitHub owner, then push its
+  branch and create one idempotent pull request.
 
 ## Local setup
 
@@ -28,8 +34,11 @@ milestones.
 3. Run `pnpm install` followed by `pnpm dev`.
 
 `GITHUB_PAT` is server-only. It needs repository **Metadata: Read** to sync
-projects and **Contents: Read** to create an M3 workspace from a private
-repository. Keep it out of `NEXT_PUBLIC_*`, commits, and database rows.
+projects, **Contents: Read and write** to clone private repositories and push
+workspace branches, and **Pull requests: Read and write** to find or create
+M9 pull requests. The token must belong to the configured Runtime owner.
+Keep it out of `NEXT_PUBLIC_*`, commits, database rows, and repository setup
+scripts.
 
 ## M3 local workspaces
 
@@ -57,3 +66,36 @@ workspace on fresh compute, or irreversibly destroy it. Lifecycle requests are
 same-origin and owner-gated. Runtime atomically records `suspending`,
 `resuming`, and `destroying` states before calling the provider so another
 browser tab cannot run the same action twice.
+
+## M6–M9 Claude, review, and publishing workflow
+
+After a workspace is ready, enter a task in **Claude Code**. Runtime creates a
+durable queued job, starts Claude as a detached provider process, and records
+the log and completion paths before returning control to the browser. Only one
+queued or running job is allowed per workspace. Its terminal status is
+reconciled from a provider-owned result record, so refreshing the page does
+not abandon a completed job.
+
+The log panel reconnects with byte offsets through an owner-scoped SSE endpoint.
+Runtime redacts configured Claude credentials before text reaches the browser.
+The Claude child receives only `ANTHROPIC_API_KEY` or
+`CLAUDE_CODE_OAUTH_TOKEN`; it never receives the GitHub token.
+
+Use **Changes** to inspect uncommitted files. Runtime lists only the active
+worktree's Git changes and serves a capped, literal-pathspec diff for a file
+selected from that list. It rejects traversal, Git pathspec magic, and
+unexpected provider log/result paths.
+
+Use **Publish** only after the job is finished. Runtime confirms the configured
+PAT still belongs to the signed-in owner, commits all current worktree changes
+with that GitHub identity, pushes only the persisted workspace branch with a
+short-lived credential scope, and creates one pull request. A persisted record
+plus an existing-open-PR lookup makes retries idempotent. No GitHub or Claude
+credential is stored in Supabase or exposed to the browser.
+
+Apply migrations in order, including
+`20260804090000_jobs_and_pull_requests.sql`, before using M6–M9. Run
+`pnpm check`, `pnpm build`, and `./scripts/verify-migrations.sh` before
+deployment. The local provider is appropriate only when `RUNTIME_LOCAL_ROOT`
+is durable and private; production deployments should use a persistent Modal
+Volume with server-only Modal credentials.

@@ -11,7 +11,7 @@ import {
 import { optionalEnv } from "@/lib/env";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import type { ProvisionPhase } from "@/lib/runtime/types";
-import { workspaceRuntimeEnvironment } from "@/lib/runtime/workspace-environment";
+import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 
 export const dynamic = "force-dynamic";
 
@@ -140,7 +140,7 @@ export async function POST(request: Request, context: RouteContext) {
       repoFullName: project.fullName,
       baseBranch: project.defaultBranch,
       branch: workspace.branch,
-      env: workspaceRuntimeEnvironment(),
+      env: workspaceCloneEnvironment(),
       onPhase: setPhase,
     });
 
