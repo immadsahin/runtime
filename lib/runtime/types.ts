@@ -32,15 +32,18 @@ export type Project = {
 
 /**
  * Lifecycle: creating -> provisioning -> ready(claude_ready) -> idle
- *            -> resuming -> ready -> suspended -> destroyed
+ *            -> suspending -> suspended -> resuming -> ready -> destroying
+ *            -> destroyed
  */
 export type WorkspaceStatus =
   | "creating"
   | "provisioning"
   | "ready"
   | "idle"
+  | "suspending"
   | "resuming"
   | "suspended"
+  | "destroying"
   | "destroyed"
   | "failed";
 
@@ -90,12 +93,28 @@ export type Job = {
   prompt: string;
   /** Log file path on durable storage, tailed by streamLogs. */
   logPath: string;
+  /** Provider-owned completion record; never supplied by the browser. */
+  resultPath: string;
+  /** Detached process identity, when the provider can supply one. */
+  executionHandle: string | null;
+  logBytes: number;
   exitCode: number | null;
   /** Claude Code session id, so follow-up jobs can `--resume`. */
   sessionId: string | null;
   costUsd: number | null;
   startedAt: string | null;
   finishedAt: string | null;
+  createdAt: string;
+};
+
+export type WorkspacePullRequest = {
+  id: string;
+  workspaceId: string;
+  number: number;
+  url: string;
+  title: string;
+  baseBranch: string;
+  headBranch: string;
   createdAt: string;
 };
 
@@ -135,6 +154,8 @@ export type ExecuteJobInput = {
   sandboxId: string;
   jobId: string;
   prompt: string;
+  /** Narrow Claude credential set, injected only for this command. */
+  env: Record<string, string>;
   /** Resume a previous Claude Code session instead of starting fresh. */
   resumeSessionId?: string;
 };
@@ -142,6 +163,19 @@ export type ExecuteJobInput = {
 export type ExecuteJobResult = {
   /** Logs are written here and tailed asynchronously; execution is detached. */
   logPath: string;
+  /** Atomically written by the detached runner when it reaches a terminal state. */
+  resultPath: string;
+  executionHandle?: string;
+};
+
+export type JobPaths = Pick<ExecuteJobResult, "logPath" | "resultPath">;
+
+export type JobResult = {
+  status: Extract<JobStatus, "succeeded" | "failed" | "cancelled">;
+  exitCode: number | null;
+  sessionId?: string;
+  costUsd?: number;
+  finishedAt: string;
 };
 
 export type LogChunk = {
@@ -153,6 +187,7 @@ export type LogChunk = {
 export type StreamLogsInput = {
   workspaceId: string;
   sandboxId: string;
+  jobId: string;
   logPath: string;
   /** Resume from this byte offset. */
   fromOffset?: number;
@@ -174,6 +209,23 @@ export type CreatePullRequestResult = {
   number: number;
 };
 
+export type CommitWorkspaceInput = {
+  workspaceId: string;
+  sandboxId: string;
+  message: string;
+  author: { name: string; email: string };
+};
+
+export type CommitWorkspaceResult = { sha: string };
+
+export type PushWorkspaceBranchInput = {
+  workspaceId: string;
+  sandboxId: string;
+  repoFullName: string;
+  branch: string;
+  githubToken: string;
+};
+
 /**
  * Every execution backend implements this. Swapping `RUNTIME_PROVIDER`
  * between `local` and `modal` must not require any API or UI change.
@@ -192,7 +244,36 @@ export interface RuntimeProvider {
 
   executeJob(input: ExecuteJobInput): Promise<ExecuteJobResult>;
 
+  /** Deterministic, provider-owned paths persisted before detached execution. */
+  getJobPaths(input: { workspaceId: string; jobId: string }): JobPaths;
+
+  /** Read a provider-owned completion record for a detached job. */
+  getJobResult(input: {
+    workspaceId: string;
+    sandboxId: string;
+    jobId: string;
+    resultPath: string;
+  }): Promise<JobResult | null>;
+
   streamLogs(input: StreamLogsInput): AsyncIterable<LogChunk>;
+
+  /** Workspace changes compared with the worktree's current branch HEAD. */
+  listChangedFiles(input: {
+    workspaceId: string;
+    sandboxId: string;
+  }): Promise<ChangedFile[]>;
+
+  /** A bounded, text-only diff for one provider-validated changed file. */
+  readChangedFileDiff(input: {
+    workspaceId: string;
+    sandboxId: string;
+    path: string;
+  }): Promise<string>;
+
+  commitWorkspace(input: CommitWorkspaceInput): Promise<CommitWorkspaceResult>;
+
+  /** Push only the persisted project branch using an operation-scoped token. */
+  pushWorkspaceBranch(input: PushWorkspaceBranchInput): Promise<void>;
 
   /** Stop compute, keep durable storage. */
   suspendWorkspace(input: {

@@ -1,5 +1,5 @@
 import type { Database } from "@/lib/supabase/database.types";
-import type { Job, Project, Workspace } from "@/lib/runtime/types";
+import type { Job, Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 
 type Tables = Database["public"]["Tables"];
 
@@ -49,11 +49,29 @@ export function toJob(row: Tables["jobs"]["Row"]): Job {
     status: row.status,
     prompt: row.prompt,
     logPath: row.log_path ?? "",
+    resultPath: row.result_path ?? "",
+    executionHandle: row.execution_handle,
+    logBytes: row.log_bytes,
     exitCode: row.exit_code,
     sessionId: row.session_id,
     costUsd: row.cost_usd,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
+    createdAt: row.created_at,
+  };
+}
+
+export function toWorkspacePullRequest(
+  row: Tables["pull_requests"]["Row"],
+): WorkspacePullRequest {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    number: row.github_number,
+    url: row.url,
+    title: row.title,
+    baseBranch: row.base_branch,
+    headBranch: row.head_branch,
     createdAt: row.created_at,
   };
 }

@@ -1,11 +1,12 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { toJob, toProject, toWorkspace } from "@/lib/db/mappers";
+import { toJob, toProject, toWorkspace, toWorkspacePullRequest } from "@/lib/db/mappers";
 import type {
   Job,
   JobStatus,
   Project,
   ProvisionPhase,
   Workspace,
+  WorkspacePullRequest,
   WorkspaceStatus,
 } from "@/lib/runtime/types";
 
@@ -171,6 +172,68 @@ export async function updateWorkspace(
   if (error) throw error;
 }
 
+/**
+ * Move a workspace only if it remains in an expected state. Lifecycle actions
+ * use this optimistic transition so a second tab cannot start a duplicate
+ * suspend, resume, or destroy operation against the same provider resource.
+ */
+export async function transitionWorkspace(input: {
+  id: string;
+  from: WorkspaceStatus[];
+  patch: {
+    status: WorkspaceStatus;
+    phase?: ProvisionPhase | null;
+    sandboxId?: string | null;
+    volumeName?: string | null;
+    worktreePath?: string | null;
+    errorMessage?: string | null;
+    touchActive?: boolean;
+  };
+}): Promise<Workspace | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workspaces")
+    .update({
+      status: input.patch.status,
+      ...(input.patch.phase !== undefined && { phase: input.patch.phase }),
+      ...(input.patch.sandboxId !== undefined && {
+        sandbox_id: input.patch.sandboxId,
+      }),
+      ...(input.patch.volumeName !== undefined && {
+        volume_name: input.patch.volumeName,
+      }),
+      ...(input.patch.worktreePath !== undefined && {
+        worktree_path: input.patch.worktreePath,
+      }),
+      ...(input.patch.errorMessage !== undefined && {
+        error_message: input.patch.errorMessage,
+      }),
+      ...(input.patch.touchActive && { last_active_at: new Date().toISOString() }),
+    })
+    .eq("id", input.id)
+    .in("status", input.from)
+    .select("*")
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? toWorkspace(data) : null;
+}
+
+/** Whether compute must remain available for a queued or running job. */
+export async function hasActiveJob(workspaceId: string): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .in("status", ["queued", "running"])
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data !== null;
+}
+
 // --- jobs ------------------------------------------------------------------
 
 export async function listJobs(workspaceId: string): Promise<Job[]> {
@@ -225,6 +288,8 @@ export async function updateJob(
   patch: {
     status?: JobStatus;
     logPath?: string | null;
+    resultPath?: string | null;
+    executionHandle?: string | null;
     logBytes?: number;
     exitCode?: number | null;
     sessionId?: string | null;
@@ -239,6 +304,10 @@ export async function updateJob(
     .update({
       ...(patch.status !== undefined && { status: patch.status }),
       ...(patch.logPath !== undefined && { log_path: patch.logPath }),
+      ...(patch.resultPath !== undefined && { result_path: patch.resultPath }),
+      ...(patch.executionHandle !== undefined && {
+        execution_handle: patch.executionHandle,
+      }),
       ...(patch.logBytes !== undefined && { log_bytes: patch.logBytes }),
       ...(patch.exitCode !== undefined && { exit_code: patch.exitCode }),
       ...(patch.sessionId !== undefined && { session_id: patch.sessionId }),
@@ -249,4 +318,87 @@ export async function updateJob(
     .eq("id", id);
 
   if (error) throw error;
+}
+
+/** Atomically claim or complete a job only while it is in an expected state. */
+export async function transitionJob(input: {
+  id: string;
+  from: JobStatus[];
+  patch: {
+    status: JobStatus;
+    logPath?: string | null;
+    resultPath?: string | null;
+    executionHandle?: string | null;
+    logBytes?: number;
+    exitCode?: number | null;
+    sessionId?: string | null;
+    costUsd?: number | null;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+  };
+}): Promise<Job | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("jobs")
+    .update({
+      status: input.patch.status,
+      ...(input.patch.logPath !== undefined && { log_path: input.patch.logPath }),
+      ...(input.patch.resultPath !== undefined && { result_path: input.patch.resultPath }),
+      ...(input.patch.executionHandle !== undefined && {
+        execution_handle: input.patch.executionHandle,
+      }),
+      ...(input.patch.logBytes !== undefined && { log_bytes: input.patch.logBytes }),
+      ...(input.patch.exitCode !== undefined && { exit_code: input.patch.exitCode }),
+      ...(input.patch.sessionId !== undefined && { session_id: input.patch.sessionId }),
+      ...(input.patch.costUsd !== undefined && { cost_usd: input.patch.costUsd }),
+      ...(input.patch.startedAt !== undefined && { started_at: input.patch.startedAt }),
+      ...(input.patch.finishedAt !== undefined && { finished_at: input.patch.finishedAt }),
+    })
+    .eq("id", input.id)
+    .in("status", input.from)
+    .select("*")
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? toJob(data) : null;
+}
+
+export async function getWorkspacePullRequest(
+  workspaceId: string,
+): Promise<WorkspacePullRequest | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("pull_requests")
+    .select("*")
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toWorkspacePullRequest(data) : null;
+}
+
+export async function createWorkspacePullRequest(input: {
+  ownerId: string;
+  workspaceId: string;
+  number: number;
+  url: string;
+  title: string;
+  baseBranch: string;
+  headBranch: string;
+}): Promise<WorkspacePullRequest> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("pull_requests")
+    .insert({
+      owner_id: input.ownerId,
+      workspace_id: input.workspaceId,
+      github_number: input.number,
+      url: input.url,
+      title: input.title,
+      base_branch: input.baseBranch,
+      head_branch: input.headBranch,
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return toWorkspacePullRequest(data);
 }
