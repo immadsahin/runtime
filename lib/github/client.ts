@@ -32,12 +32,12 @@ type GitHubApiRepository = {
  * a GitHub response body, token metadata, or request URL.
  */
 export class GitHubSyncError extends Error {
-  constructor(
-    message: string,
-    readonly status?: number,
-  ) {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
     super(message);
     this.name = "GitHubSyncError";
+    this.status = status;
   }
 }
 
@@ -56,16 +56,58 @@ function githubHeaders(token: string) {
 }
 
 async function fetchGitHub(url: URL, token: string): Promise<Response> {
+  return githubRequest("GET", url, token);
+}
+
+async function githubRequest(
+  method: "GET" | "POST",
+  url: URL,
+  token: string,
+  body?: unknown,
+): Promise<Response> {
   try {
     return await fetch(url, {
-      headers: githubHeaders(token),
+      method,
+      headers: {
+        ...githubHeaders(token),
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    console.error("GitHub repository request failed", error);
+    console.error("GitHub request failed", error);
     throw new GitHubSyncError("Could not reach GitHub. Please try again.");
   }
+}
+
+/**
+ * The GitHub login that owns the configured token, read from `/user`. Shared
+ * by repository sync and the M9 publish path so both enforce the same
+ * "token belongs to the Runtime owner" invariant.
+ */
+async function fetchTokenLogin(token: string): Promise<string> {
+  const identity = await fetchGitHub(new URL("/user", GITHUB_API_URL), token);
+  if (!identity.ok) {
+    console.error("GitHub token identity request was rejected", {
+      status: identity.status,
+    });
+    throw new GitHubSyncError("GitHub could not authorize the configured token.");
+  }
+
+  let login: unknown;
+  try {
+    login = ((await identity.json()) as { login?: unknown }).login;
+  } catch (error) {
+    console.error("GitHub returned an unreadable token identity", error);
+    throw new GitHubSyncError("GitHub returned an invalid response.");
+  }
+
+  if (typeof login !== "string") {
+    throw new GitHubSyncError("GitHub returned an invalid response.");
+  }
+  return login;
 }
 
 function normalizeRepository(repo: GitHubApiRepository): GitHubRepository {
@@ -106,25 +148,7 @@ export async function listGitHubRepositories(
   const token = requireEnv("GITHUB_PAT");
   const repositories: GitHubRepository[] = [];
 
-  const identity = await fetchGitHub(new URL("/user", GITHUB_API_URL), token);
-  if (!identity.ok) {
-    console.error("GitHub token identity request was rejected", {
-      status: identity.status,
-    });
-    throw new GitHubSyncError("GitHub could not authorize the configured token.");
-  }
-
-  let tokenLogin: unknown;
-  try {
-    tokenLogin = ((await identity.json()) as { login?: unknown }).login;
-  } catch (error) {
-    console.error("GitHub returned an unreadable token identity", error);
-    throw new GitHubSyncError("GitHub returned an invalid response.");
-  }
-
-  if (typeof tokenLogin !== "string") {
-    throw new GitHubSyncError("GitHub returned an invalid response.");
-  }
+  const tokenLogin = await fetchTokenLogin(token);
   if (tokenLogin.toLowerCase() !== expectedOwnerLogin.toLowerCase()) {
     throw new GitHubSyncError(
       "The configured GitHub token belongs to a different account.",
@@ -176,4 +200,123 @@ export async function listGitHubRepositories(
   throw new GitHubSyncError(
     "Repository sync stopped after 10,000 repositories. Narrow the GitHub token's access and try again.",
   );
+}
+
+// ---------------------------------------------------------------------------
+// M9 publish: verify the token owner, then find-or-create one pull request.
+// ---------------------------------------------------------------------------
+
+export type WorkspacePullRequestRef = { number: number; url: string };
+
+/**
+ * Re-confirm that the configured PAT still belongs to the signed-in Runtime
+ * owner, immediately before it is used to push a branch and open a PR.
+ */
+export async function verifyTokenOwner(expectedOwnerLogin: string): Promise<void> {
+  const token = requireEnv("GITHUB_PAT");
+  const tokenLogin = await fetchTokenLogin(token);
+  if (tokenLogin.toLowerCase() !== expectedOwnerLogin.toLowerCase()) {
+    throw new GitHubSyncError(
+      "The configured GitHub token belongs to a different account.",
+    );
+  }
+}
+
+/**
+ * Return the existing open PR for `headBranch`, or create one. Making this
+ * idempotent (lookup before create, and re-lookup on GitHub's 422 for an
+ * already-existing PR) lets the publish route retry safely.
+ */
+export async function findOrCreatePullRequest(input: {
+  repoFullName: string;
+  headBranch: string;
+  baseBranch: string;
+  title: string;
+  body: string;
+}): Promise<WorkspacePullRequestRef> {
+  const token = requireEnv("GITHUB_PAT");
+  const [owner] = input.repoFullName.split("/");
+
+  const existing = await findOpenPullRequest(input, owner, token);
+  if (existing) return existing;
+
+  const response = await githubRequest(
+    "POST",
+    new URL(`/repos/${input.repoFullName}/pulls`, GITHUB_API_URL),
+    token,
+    {
+      title: input.title,
+      head: input.headBranch,
+      base: input.baseBranch,
+      body: input.body,
+    },
+  );
+
+  if (response.status === 422) {
+    // A concurrent publish, or "no commits between base and head".
+    const retried = await findOpenPullRequest(input, owner, token);
+    if (retried) return retried;
+    throw new GitHubSyncError(
+      "GitHub could not open a pull request. Ensure the branch has commits that differ from the base.",
+      422,
+    );
+  }
+  if (!response.ok) {
+    console.error("GitHub pull request creation was rejected", {
+      status: response.status,
+    });
+    throw new GitHubSyncError(
+      response.status === 401 || response.status === 403
+        ? "GitHub could not authorize the configured token."
+        : "GitHub could not open a pull request. Please try again.",
+      response.status,
+    );
+  }
+  return toPullRequestRef(await readJson(response));
+}
+
+async function findOpenPullRequest(
+  input: { repoFullName: string; headBranch: string; baseBranch: string },
+  owner: string,
+  token: string,
+): Promise<WorkspacePullRequestRef | null> {
+  const url = new URL(`/repos/${input.repoFullName}/pulls`, GITHUB_API_URL);
+  url.searchParams.set("head", `${owner}:${input.headBranch}`);
+  url.searchParams.set("base", input.baseBranch);
+  url.searchParams.set("state", "open");
+
+  const response = await fetchGitHub(url, token);
+  if (!response.ok) {
+    console.error("GitHub pull request lookup was rejected", {
+      status: response.status,
+    });
+    throw new GitHubSyncError(
+      "GitHub could not look up existing pull requests. Please try again.",
+      response.status,
+    );
+  }
+  const list = await readJson(response);
+  if (!Array.isArray(list) || list.length === 0) return null;
+  return toPullRequestRef(list[0]);
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (error) {
+    console.error("GitHub returned an unreadable response", error);
+    throw new GitHubSyncError("GitHub returned an invalid response.");
+  }
+}
+
+function toPullRequestRef(record: unknown): WorkspacePullRequestRef {
+  const pr = (record ?? {}) as { number?: unknown; html_url?: unknown };
+  if (
+    typeof pr.number !== "number" ||
+    !Number.isInteger(pr.number) ||
+    typeof pr.html_url !== "string"
+  ) {
+    throw new GitHubSyncError("GitHub returned an invalid pull request record.");
+  }
+  return { number: pr.number, url: pr.html_url };
 }

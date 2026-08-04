@@ -9,6 +9,7 @@ import {
   updateWorkspace,
 } from "@/lib/db/repositories";
 import { optionalEnv } from "@/lib/env";
+import { isSameOriginRequest } from "@/lib/http/guards";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import type { ProvisionPhase } from "@/lib/runtime/types";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
@@ -16,19 +17,6 @@ import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
-
-function isSameOriginRequest(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  if (!origin) return false;
-
-  const baseUrl = optionalEnv("RUNTIME_BASE_URL");
-  if (!baseUrl) return false;
-  try {
-    return new URL(origin).origin === new URL(baseUrl).origin;
-  } catch {
-    return false;
-  }
-}
 
 function isValidBranchName(branch: string): boolean {
   return (

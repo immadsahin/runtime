@@ -6,8 +6,8 @@ import {
   hasActiveJob,
   transitionWorkspace,
 } from "@/lib/db/repositories";
-import { optionalEnv } from "@/lib/env";
-import { getRuntimeProvider } from "@/lib/runtime/provider";
+import { isSameOriginRequest } from "@/lib/http/guards";
+import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
@@ -15,30 +15,12 @@ export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ id: string }> };
 type LifecycleAction = "resume" | "suspend" | "destroy";
 
-function isSameOriginRequest(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  if (!origin) return false;
-
-  const baseUrl = optionalEnv("RUNTIME_BASE_URL");
-  if (!baseUrl) return false;
-  try {
-    return new URL(origin).origin === new URL(baseUrl).origin;
-  } catch {
-    return false;
-  }
-}
-
 function actionFor(body: unknown): LifecycleAction | null {
   if (!body || typeof body !== "object" || !("action" in body)) return null;
   const action = body.action;
   return action === "resume" || action === "suspend" || action === "destroy"
     ? action
     : null;
-}
-
-function lifecycleProvider(workspace: Workspace): RuntimeProvider | null {
-  const provider = getRuntimeProvider();
-  return provider.name === workspace.provider ? provider : null;
 }
 
 async function startTransition(
@@ -112,22 +94,9 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
 
-  let provider: RuntimeProvider | null;
-  try {
-    provider = lifecycleProvider(workspace);
-  } catch (error) {
-    console.error(`Workspace ${id} provider is unavailable`, error);
-    return NextResponse.json(
-      { error: "The configured Runtime provider is not available." },
-      { status: 503 },
-    );
-  }
-  if (!provider) {
-    return NextResponse.json(
-      { error: `Configure the ${workspace.provider} provider before managing this workspace.` },
-      { status: 409 },
-    );
-  }
+  const resolution = resolveProvider(workspace);
+  if (!resolution.ok) return providerErrorResponse(resolution);
+  const provider = resolution.provider;
 
   if (action === "resume") return resumeWorkspace(workspace, provider);
   if (action === "suspend") return suspendWorkspace(workspace, provider);

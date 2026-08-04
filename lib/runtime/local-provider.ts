@@ -163,6 +163,11 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     return { sandboxId: `local:${input.workspaceId}` };
   }
 
+  async sandboxAlive(sandboxId: string): Promise<boolean> {
+    // The "sandbox" is just this host, so its handle never expires.
+    return sandboxId.length > 0;
+  }
+
   async executeJob(input: ExecuteJobInput): Promise<ExecuteJobResult> {
     const p = this.paths(input.workspaceId);
     await fs.mkdir(p.logs, { recursive: true });
@@ -366,9 +371,10 @@ export class LocalRuntimeProvider implements RuntimeProvider {
 /**
  * Headless Claude Code invocation.
  *
- * Flags are pinned deliberately: `--permission-mode` because v2.1.200 changed
- * the default to Manual (which hangs unattended), and `stream-json` so the UI
- * can render structured events rather than scraped text.
+ * Flags are pinned deliberately: `--permission-mode bypassPermissions` so the
+ * job never blocks on an interactive approval prompt (it runs detached, with no
+ * TTY), and `stream-json` so the UI can render structured events rather than
+ * scraped text. Tool access is still bounded by `--allowedTools`.
  */
 function claudeCommand(input: ExecuteJobInput): string {
   const args = [
@@ -379,7 +385,7 @@ function claudeCommand(input: ExecuteJobInput): string {
     "stream-json",
     "--verbose",
     "--permission-mode",
-    "dontAsk",
+    "bypassPermissions",
     "--allowedTools",
     shellQuote("Read,Edit,Write,Bash,Glob,Grep"),
   ];
@@ -550,7 +556,7 @@ function isJobResult(value: unknown): value is JobResult {
   );
 }
 
-function parseChangedFiles(output: string): ChangedFile[] {
+export function parseChangedFiles(output: string): ChangedFile[] {
   const entries = output.split("\0").filter(Boolean);
   const files: ChangedFile[] = [];
   for (let index = 0; index < entries.length; index += 1) {
@@ -578,7 +584,7 @@ function limitText(value: string, maxBytes: number): string {
 }
 
 /** Reject traversal and Git pathspec magic before invoking Git with a user selection. */
-function isSafeRelativePath(filePath: string): boolean {
+export function isSafeRelativePath(filePath: string): boolean {
   return (
     Boolean(filePath) &&
     !filePath.includes("\0") &&

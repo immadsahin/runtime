@@ -12,7 +12,8 @@
     "start": "next start --port ${PORT:-3000}",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm typecheck && pnpm lint"
+    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --import ./scripts/test-loader.mjs --test \"test/**/*.test.ts\"",
+    "check": "pnpm typecheck && pnpm lint && pnpm test"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

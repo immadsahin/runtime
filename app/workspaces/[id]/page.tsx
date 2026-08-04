@@ -11,6 +11,7 @@ import { WorkspaceLifecycleControls } from "@/components/workspace-lifecycle-con
 import { WorkspacePublishPanel } from "@/components/workspace-publish-panel";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProject, getWorkspace, getWorkspacePullRequest, listJobs } from "@/lib/db/repositories";
+import { reconcileWorkspaceJobs } from "@/lib/runtime/compute.deps";
 import type { ProvisionPhase } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +38,10 @@ export default async function WorkspacePage({
   if (!workspace) notFound();
   const project = await getProject(workspace.projectId);
   if (!project) notFound();
+  // Settle any jobs that finished while this page was closed, then read fresh
+  // rows — durability: job status settles whenever the owner views the page,
+  // with no live SSE stream required. Best-effort; never blocks the render.
+  await reconcileWorkspaceJobs(workspace).catch(() => {});
   const [jobs, pullRequest] = await Promise.all([
     listJobs(workspace.id),
     getWorkspacePullRequest(workspace.id),

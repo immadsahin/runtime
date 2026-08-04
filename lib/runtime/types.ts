@@ -242,6 +242,14 @@ export interface RuntimeProvider {
     env: Record<string, string>;
   }): Promise<{ sandboxId: string }>;
 
+  /**
+   * Whether a previously-created sandbox handle still exists and can run work.
+   * Disposable sandboxes (Modal expires them at 24h) may be gone even though the
+   * workspace row still records their id; callers use this to decide whether to
+   * resume onto fresh compute before starting a job or terminal.
+   */
+  sandboxAlive(sandboxId: string): Promise<boolean>;
+
   executeJob(input: ExecuteJobInput): Promise<ExecuteJobResult>;
 
   /** Deterministic, provider-owned paths persisted before detached execution. */
