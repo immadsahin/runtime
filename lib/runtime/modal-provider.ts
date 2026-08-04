@@ -135,6 +135,19 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     return { sandboxId };
   }
 
+  async sandboxAlive(sandboxId: string): Promise<boolean> {
+    if (!sandboxId) return false;
+    try {
+      const sandbox = await this.client.sandboxes.fromId(sandboxId);
+      // poll() resolves to the exit code, or null while the sandbox is running.
+      return (await sandbox.poll()) === null;
+    } catch (error) {
+      if (error instanceof NotFoundError) return false;
+      console.error(`Could not poll Modal sandbox ${sandboxId}`, error);
+      return false;
+    }
+  }
+
   async executeJob(input: ExecuteJobInput): Promise<ExecuteJobResult> {
     const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
     const { logPath, resultPath } = this.getJobPaths(input);
@@ -417,7 +430,7 @@ function claudeCommand(input: ExecuteJobInput): string {
     "stream-json",
     "--verbose",
     "--permission-mode",
-    "dontAsk",
+    "bypassPermissions",
     "--allowedTools",
     shellQuote("Read,Edit,Write,Bash,Glob,Grep"),
   ];
