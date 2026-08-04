@@ -171,6 +171,68 @@ export async function updateWorkspace(
   if (error) throw error;
 }
 
+/**
+ * Move a workspace only if it remains in an expected state. Lifecycle actions
+ * use this optimistic transition so a second tab cannot start a duplicate
+ * suspend, resume, or destroy operation against the same provider resource.
+ */
+export async function transitionWorkspace(input: {
+  id: string;
+  from: WorkspaceStatus[];
+  patch: {
+    status: WorkspaceStatus;
+    phase?: ProvisionPhase | null;
+    sandboxId?: string | null;
+    volumeName?: string | null;
+    worktreePath?: string | null;
+    errorMessage?: string | null;
+    touchActive?: boolean;
+  };
+}): Promise<Workspace | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workspaces")
+    .update({
+      status: input.patch.status,
+      ...(input.patch.phase !== undefined && { phase: input.patch.phase }),
+      ...(input.patch.sandboxId !== undefined && {
+        sandbox_id: input.patch.sandboxId,
+      }),
+      ...(input.patch.volumeName !== undefined && {
+        volume_name: input.patch.volumeName,
+      }),
+      ...(input.patch.worktreePath !== undefined && {
+        worktree_path: input.patch.worktreePath,
+      }),
+      ...(input.patch.errorMessage !== undefined && {
+        error_message: input.patch.errorMessage,
+      }),
+      ...(input.patch.touchActive && { last_active_at: new Date().toISOString() }),
+    })
+    .eq("id", input.id)
+    .in("status", input.from)
+    .select("*")
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? toWorkspace(data) : null;
+}
+
+/** Whether compute must remain available for a queued or running job. */
+export async function hasActiveJob(workspaceId: string): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .in("status", ["queued", "running"])
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data !== null;
+}
+
 // --- jobs ------------------------------------------------------------------
 
 export async function listJobs(workspaceId: string): Promise<Job[]> {

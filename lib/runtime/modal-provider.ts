@@ -1,4 +1,4 @@
-import { ModalClient, type Sandbox, type Volume } from "modal";
+import { ModalClient, NotFoundError, type Sandbox, type Volume } from "modal";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
 import type {
@@ -40,12 +40,14 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     const volumeName = workspaceVolumeName(input.workspaceId);
     const worktreePath = `${WORKSPACE_ROOT}/worktrees/${sanitizeBranch(input.branch)}`;
     let sandbox: Sandbox | null = null;
+    let volumeAllocated = false;
 
     try {
       await input.onPhase?.("allocate");
       const volume = await this.client.volumes.fromName(volumeName, {
         createIfMissing: true,
       });
+      volumeAllocated = true;
       sandbox = await this.createSandbox(input.workspaceId, volume, input.env);
 
       await input.onPhase?.("clone");
@@ -104,6 +106,13 @@ export class ModalRuntimeProvider implements RuntimeProvider {
           console.error("Could not terminate failed Modal workspace", terminationError);
         });
       }
+      if (volumeAllocated) {
+        await this.client.volumes.delete(volumeName, { allowMissing: true }).catch(
+          (deletionError: unknown) => {
+            console.error("Could not delete failed Modal workspace volume", deletionError);
+          },
+        );
+      }
       throw error;
     }
   }
@@ -134,8 +143,14 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     workspaceId: string;
     sandboxId: string;
   }): Promise<void> {
-    const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
-    await sandbox.terminate();
+    try {
+      const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
+      await sandbox.terminate();
+    } catch (error) {
+      // Modal Sandboxes are intentionally disposable and expire at 24 hours.
+      // An absent sandbox is already suspended from Runtime's perspective.
+      if (!(error instanceof NotFoundError)) throw error;
+    }
   }
 
   async destroyWorkspace(input: {
@@ -144,14 +159,13 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     volumeName: string | null;
   }): Promise<void> {
     if (input.sandboxId) {
-      await this.client.sandboxes
-        .fromId(input.sandboxId)
-        .then((sandbox) => sandbox.terminate())
-        .catch((error: unknown) => {
-          // A 24-hour sandbox may already be gone; the durable Volume still
-          // must be removed below.
-          console.warn(`Could not terminate Modal sandbox ${input.sandboxId}`, error);
-        });
+      try {
+        const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
+        await sandbox.terminate();
+      } catch (error) {
+        // A 24-hour sandbox may already be gone; it has no compute to clean.
+        if (!(error instanceof NotFoundError)) throw error;
+      }
     }
     if (input.volumeName) {
       await this.client.volumes.delete(input.volumeName, { allowMissing: true });

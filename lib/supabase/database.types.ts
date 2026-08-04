@@ -18,8 +18,10 @@ export type WorkspaceStatusDb =
   | "provisioning"
   | "ready"
   | "idle"
+  | "suspending"
   | "resuming"
   | "suspended"
+  | "destroying"
   | "destroyed"
   | "failed";
 

@@ -57,7 +57,19 @@ update workspaces set status = 'destroyed' where branch = 'feat/x';
 insert into workspaces (owner_id, project_id, branch)
 select '11111111-1111-1111-1111-111111111111', id, 'feat/x' from projects limit 1;
 
--- 5. At most one queued/running job per workspace.
+-- 5. Lifecycle actions use explicit in-progress enum values.
+do $$
+begin
+  update workspaces set status = 'suspending'
+  where branch = 'feat/x' and status <> 'destroyed';
+  update workspaces set status = 'destroying'
+  where branch = 'feat/x' and status <> 'destroyed';
+  update workspaces set status = 'creating'
+  where branch = 'feat/x' and status <> 'destroyed';
+  raise notice 'ok: lifecycle transition states accepted';
+end $$;
+
+-- 6. At most one queued/running job per workspace.
 insert into jobs (owner_id, workspace_id, prompt, status)
 select '11111111-1111-1111-1111-111111111111', id, 'first', 'running'
 from workspaces where status <> 'destroyed' limit 1;
@@ -72,10 +84,10 @@ exception when unique_violation then
   raise notice 'ok: concurrent job rejected';
 end $$;
 
--- 6. A finished job frees the slot.
+-- 7. A finished job frees the slot.
 update jobs set status = 'succeeded' where prompt = 'first';
 
--- 7. A job cannot reference a workspace belonging to another owner.
+-- 8. A job cannot reference a workspace belonging to another owner.
 do $$
 declare owner_workspace_id uuid;
 begin
@@ -87,12 +99,12 @@ exception when foreign_key_violation then
   raise notice 'ok: cross-owner workspace rejected';
 end $$;
 
--- 8. A finished job leaves room for the next queued job.
+-- 9. A finished job leaves room for the next queued job.
 insert into jobs (owner_id, workspace_id, prompt, status)
 select '11111111-1111-1111-1111-111111111111', id, 'second', 'queued'
 from workspaces where status <> 'destroyed' limit 1;
 
--- 9. updated_at is maintained by trigger.
+-- 10. updated_at is maintained by trigger.
 do $$
 declare touched boolean;
 begin
@@ -104,7 +116,7 @@ begin
   raise notice 'ok: updated_at trigger fires';
 end $$;
 
--- 10. RLS isolates rows by owner.
+-- 11. RLS isolates rows by owner.
 do $do$
 begin
   if not exists (select 1 from pg_roles where rolname = 'authed') then
@@ -135,7 +147,7 @@ begin
   raise notice 'ok: RLS hides other owners'' rows';
 end $$;
 
--- 11. RLS rejects inserts that forge another owner.
+-- 12. RLS rejects inserts that forge another owner.
 do $$
 begin
   insert into projects (owner_id, github_repo_id, full_name, owner, name)

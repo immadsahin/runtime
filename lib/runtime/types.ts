@@ -32,15 +32,18 @@ export type Project = {
 
 /**
  * Lifecycle: creating -> provisioning -> ready(claude_ready) -> idle
- *            -> resuming -> ready -> suspended -> destroyed
+ *            -> suspending -> suspended -> resuming -> ready -> destroying
+ *            -> destroyed
  */
 export type WorkspaceStatus =
   | "creating"
   | "provisioning"
   | "ready"
   | "idle"
+  | "suspending"
   | "resuming"
   | "suspended"
+  | "destroying"
   | "destroyed"
   | "failed";
 

@@ -5,6 +5,7 @@ import { CheckCircle2, CircleDashed, FolderGit2, GitBranch, HardDrive, TriangleA
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { WorkspaceLifecycleControls } from "@/components/workspace-lifecycle-controls";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProject, getWorkspace } from "@/lib/db/repositories";
 import type { ProvisionPhase } from "@/lib/runtime/types";
@@ -86,7 +87,8 @@ export default async function WorkspacePage({
           </CardContent>
         </Card>
 
-        <Card>
+        <div className="space-y-5">
+          <Card>
           <CardHeader>
             <CardTitle className="text-base">Workspace</CardTitle>
           </CardHeader>
@@ -96,6 +98,18 @@ export default async function WorkspacePage({
             <Detail label="Worktree" value={workspace.worktreePath || "Provisioning"} mono />
           </CardContent>
         </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Compute controls</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <WorkspaceLifecycleControls
+                status={workspace.status}
+                workspaceId={workspace.id}
+              />
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </AppShell>
   );
