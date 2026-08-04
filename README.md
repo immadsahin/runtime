@@ -1,6 +1,6 @@
 # Runtime v0
 
-A single-user browser control plane for creating repository-centric Claude Code
+A single-user browser control plane for creating repository-centric coding-agent
 workspaces. The browser coordinates work; provider implementations own the
 actual worktree and process lifecycle.
 
@@ -15,7 +15,7 @@ actual worktree and process lifecycle.
 - **M5:** Resume, suspend, and permanently destroy workspaces through
   owner-gated browser controls. Suspension releases compute while keeping the
   worktree; destruction removes both compute and durable storage.
-- **M6:** Run one detached Claude Code task per active workspace. Provider-owned
+- **M6:** Run one detached Claude Code or Codex task per active workspace. Provider-owned
   completion records keep job state recoverable after a page refresh or request
   ends.
 - **M7:** Stream resumable, redacted Claude logs to the workspace page using
@@ -31,7 +31,9 @@ actual worktree and process lifecycle.
    owner settings.
 2. Apply every SQL file in `supabase/migrations/` in filename order through
    the Supabase SQL editor (or use the Supabase CLI against your project).
-3. Run `pnpm install` followed by `pnpm dev`.
+3. For the local provider, install both agent CLIs with
+   `npm install -g @anthropic-ai/claude-code @openai/codex`.
+4. Run `pnpm install` followed by `pnpm dev`.
 
 `GITHUB_PAT` is server-only. It needs repository **Metadata: Read** to sync
 projects, **Contents: Read and write** to clone private repositories and push
@@ -56,8 +58,8 @@ Set `RUNTIME_PROVIDER=modal`, `MODAL_TOKEN_ID`, and `MODAL_TOKEN_SECRET` to
 run the workspace lifecycle on Modal. Runtime creates a named Modal Volume per
 workspace and mounts it at `/runtime`; the Volume retains the clone and
 worktree after the 24-hour Modal Sandbox expires. The provider builds a Node
-22 image with Git and Claude Code, creates an isolated worktree, installs
-dependencies, and verifies both Git and Claude Code before reporting ready.
+22 image with Git, Claude Code, and Codex, creates an isolated worktree, installs
+dependencies, and verifies both agent CLIs before reporting ready.
 
 ## M5 workspace lifecycle
 
@@ -67,19 +69,20 @@ same-origin and owner-gated. Runtime atomically records `suspending`,
 `resuming`, and `destroying` states before calling the provider so another
 browser tab cannot run the same action twice.
 
-## M6–M9 Claude, review, and publishing workflow
+## M6–M9 coding agents, review, and publishing workflow
 
-After a workspace is ready, enter a task in **Claude Code**. Runtime creates a
-durable queued job, starts Claude as a detached provider process, and records
+After a workspace is ready, choose **Claude Code** or **Codex** and enter a task.
+Runtime creates a durable queued job, starts the selected agent as a detached provider process, and records
 the log and completion paths before returning control to the browser. Only one
 queued or running job is allowed per workspace. Its terminal status is
 reconciled from a provider-owned result record, so refreshing the page does
 not abandon a completed job.
 
 The log panel reconnects with byte offsets through an owner-scoped SSE endpoint.
-Runtime redacts configured Claude credentials before text reaches the browser.
-The Claude child receives only `ANTHROPIC_API_KEY` or
-`CLAUDE_CODE_OAUTH_TOKEN`; it never receives the GitHub token.
+Runtime redacts configured agent credentials before text reaches the browser.
+The selected agent receives only its own credentials: Claude receives
+`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`; Codex receives `CODEX_API_KEY`.
+Neither receives the GitHub token.
 
 Use **Changes** to inspect uncommitted files. Runtime lists only the active
 worktree's Git changes and serves a capped, literal-pathspec diff for a file
@@ -90,7 +93,7 @@ Use **Publish** only after the job is finished. Runtime confirms the configured
 PAT still belongs to the signed-in owner, commits all current worktree changes
 with that GitHub identity, pushes only the persisted workspace branch with a
 short-lived credential scope, and creates one pull request. A persisted record
-plus an existing-open-PR lookup makes retries idempotent. No GitHub or Claude
+plus an existing-open-PR lookup makes retries idempotent. No GitHub or agent
 credential is stored in Supabase or exposed to the browser.
 
 Apply migrations in order, including

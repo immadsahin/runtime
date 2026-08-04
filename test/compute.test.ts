@@ -15,6 +15,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
   return {
     id: "job-1",
     workspaceId: "ws-1",
+    agent: "claude",
     status: "running",
     prompt: "hi",
     logPath: "/logs/job-1.log",

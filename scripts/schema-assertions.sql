@@ -87,6 +87,35 @@ end $$;
 -- 7. A finished job frees the slot.
 update jobs set status = 'succeeded' where prompt = 'first';
 
+-- 7a. Jobs default to Claude for backwards compatibility and accept Codex.
+do $$
+declare agent_name text;
+begin
+  insert into jobs (owner_id, workspace_id, prompt)
+  select '11111111-1111-1111-1111-111111111111', id, 'default agent'
+  from workspaces where status <> 'destroyed' limit 1
+  returning agent into agent_name;
+  if agent_name <> 'claude' then
+    raise exception 'FAIL: job agent did not default to Claude';
+  end if;
+  update jobs set status = 'succeeded' where prompt = 'default agent';
+  insert into jobs (owner_id, workspace_id, prompt, agent)
+  select '11111111-1111-1111-1111-111111111111', id, 'codex agent', 'codex'
+  from workspaces where status <> 'destroyed' limit 1;
+  update jobs set status = 'succeeded' where prompt = 'codex agent';
+  raise notice 'ok: job agent values accepted';
+end $$;
+
+do $$
+begin
+  insert into jobs (owner_id, workspace_id, prompt, agent)
+  select '11111111-1111-1111-1111-111111111111', id, 'invalid agent', 'unknown'
+  from workspaces where status <> 'destroyed' limit 1;
+  raise exception 'FAIL: invalid job agent was allowed';
+exception when check_violation then
+  raise notice 'ok: invalid job agent rejected';
+end $$;
+
 -- 8. A job cannot reference a workspace belonging to another owner.
 do $$
 declare owner_workspace_id uuid;

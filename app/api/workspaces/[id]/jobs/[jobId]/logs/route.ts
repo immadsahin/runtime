@@ -3,10 +3,10 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { getJob, getWorkspace, transitionJob } from "@/lib/db/repositories";
 import { optionalEnv } from "@/lib/env";
+import { agentJobSecrets } from "@/lib/runtime/agent";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { makeRedactor } from "@/lib/runtime/redact";
 import type { JobResult } from "@/lib/runtime/types";
-import { claudeJobSecrets } from "@/lib/runtime/workspace-environment";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +50,7 @@ export async function GET(request: Request, context: RouteContext) {
   const requested = Number(new URL(request.url).searchParams.get("offset") ?? "0");
   const fromOffset = Number.isFinite(requested) && requested > 0 ? Math.floor(requested) : 0;
   const sandboxId = workspace.sandboxId ?? "";
-  const redact = makeRedactor([...claudeJobSecrets(), optionalEnv("GITHUB_PAT")]);
+  const redact = makeRedactor([...agentJobSecrets(job.agent), optionalEnv("GITHUB_PAT")]);
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {

@@ -30,6 +30,7 @@ export async function GET() {
     claude:
       Boolean(optionalEnv("ANTHROPIC_API_KEY")) ||
       Boolean(optionalEnv("CLAUDE_CODE_OAUTH_TOKEN")),
+    codex: Boolean(optionalEnv("CODEX_API_KEY")),
   };
 
   /**

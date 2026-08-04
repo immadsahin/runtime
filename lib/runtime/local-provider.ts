@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { agentCommand } from "@/lib/runtime/agent";
 import type {
   ChangedFile,
   CommitWorkspaceInput,
@@ -147,6 +148,8 @@ export class LocalRuntimeProvider implements RuntimeProvider {
 
     await input.onPhase?.("health_check");
     await run("git", ["status", "--short"], { cwd: worktreePath });
+    await run("claude", ["--version"], { cwd: worktreePath });
+    await run("codex", ["--version"], { cwd: worktreePath });
 
     await input.onPhase?.("claude_ready");
     return {
@@ -181,7 +184,7 @@ export class LocalRuntimeProvider implements RuntimeProvider {
 
     const worktree = await firstWorktree(p.worktrees);
     const completion = completionScript(
-      claudeCommand(input),
+      agentCommand(input.agent, input),
       logPath,
       resultPath,
     );
@@ -367,33 +370,6 @@ export class LocalRuntimeProvider implements RuntimeProvider {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Headless Claude Code invocation.
- *
- * Flags are pinned deliberately: `--permission-mode bypassPermissions` so the
- * job never blocks on an interactive approval prompt (it runs detached, with no
- * TTY), and `stream-json` so the UI can render structured events rather than
- * scraped text. Tool access is still bounded by `--allowedTools`.
- */
-function claudeCommand(input: ExecuteJobInput): string {
-  const args = [
-    "claude",
-    "-p",
-    shellQuote(input.prompt),
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--permission-mode",
-    "bypassPermissions",
-    "--allowedTools",
-    shellQuote("Read,Edit,Write,Bash,Glob,Grep"),
-  ];
-  if (input.resumeSessionId) {
-    args.push("--resume", shellQuote(input.resumeSessionId));
-  }
-  return args.join(" ");
-}
 
 async function inferInstall(dir: string): Promise<string | null> {
   if (await exists(path.join(dir, "pnpm-lock.yaml"))) {

@@ -24,7 +24,7 @@ import { FormEvent, useState } from "react";
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import { WorkspaceLifecycleControls } from "@/components/workspace-lifecycle-controls";
 import { WorkspacePublishPanel } from "@/components/workspace-publish-panel";
-import type { Job, Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import type { Job, JobAgent, Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 type SideTab = "diff" | "terminal" | "publish";
@@ -46,6 +46,7 @@ export function WorkspaceStudio({
   const [activeTab, setActiveTab] = useState<SideTab>("diff");
   const [rightOpen, setRightOpen] = useState(true);
   const [prompt, setPrompt] = useState("");
+  const [agent, setAgent] = useState<JobAgent>("claude");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
@@ -61,7 +62,7 @@ export function WorkspaceStudio({
       const response = await fetch(`/api/workspaces/${workspace.id}/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: task }),
+        body: JSON.stringify({ agent, prompt: task }),
       });
       const result = (await response.json().catch(() => ({}))) as { error?: string };
       if (!response.ok) {
@@ -177,7 +178,19 @@ export function WorkspaceStudio({
             rows={3}
           />
           <div className="studio-composer-footer">
-            <span><TerminalSquare /> {activeJob ? "Run in progress" : "Runtime agent"}</span>
+            <label className="studio-composer-agent">
+              <TerminalSquare />
+              <select
+                aria-label="Coding agent"
+                disabled={!isReady || Boolean(activeJob) || submitting}
+                onChange={(event) => setAgent(event.target.value as JobAgent)}
+                value={agent}
+              >
+                <option value="claude">Claude Code</option>
+                <option value="codex">Codex</option>
+              </select>
+              <span>{activeJob ? "Run in progress" : "Runtime agent"}</span>
+            </label>
             <button type="submit" disabled={!prompt.trim() || !isReady || Boolean(activeJob) || submitting}>
               {submitting ? <LoaderCircle className="animate-spin" /> : <><Send /> Send</>}
             </button>
@@ -225,7 +238,7 @@ function JobMessage({ job }: { job: Job }) {
     <div className="studio-user-message">{job.prompt}</div>
     <div className="studio-agent-message">
       <div className="studio-message-avatar"><TerminalSquare /></div>
-      <div><div className="studio-message-meta">Runtime <span className={cn("studio-job-state", running && "is-running")}>{running ? <LoaderCircle className="animate-spin" /> : <CheckCircle2 />}{job.status}</span></div>
+      <div><div className="studio-message-meta">{job.agent === "claude" ? "Claude Code" : "Codex"} <span className={cn("studio-job-state", running && "is-running")}>{running ? <LoaderCircle className="animate-spin" /> : <CheckCircle2 />}{job.status}</span></div>
       <p>{running ? "Working in the isolated worktree. You can inspect changes or follow the run in Terminal." : "This task finished in the workspace. Review the changed files, then publish when you are ready."}</p></div>
     </div>
   </article>;

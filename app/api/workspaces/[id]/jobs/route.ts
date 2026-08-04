@@ -8,9 +8,14 @@ import {
   updateJob,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import {
+  agentCredentialMessage,
+  agentJobEnvironment,
+  agentName,
+  isJobAgent,
+} from "@/lib/runtime/agent";
 import { ensureLiveWorkspaceSandbox } from "@/lib/runtime/compute.deps";
-import type { WorkspaceStatus } from "@/lib/runtime/types";
-import { claudeJobEnvironment } from "@/lib/runtime/workspace-environment";
+import type { JobAgent, WorkspaceStatus } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +24,7 @@ const MAX_PROMPT = 20_000;
 const STARTABLE: WorkspaceStatus[] = ["ready", "idle", "suspended"];
 type RouteContext = { params: Promise<{ id: string }> };
 
-/** Start one detached Claude Code job in an active workspace. */
+/** Start one detached coding-agent job in an active workspace. */
 export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
@@ -30,21 +35,30 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Sign in as the Runtime owner." }, { status: 401 });
   }
 
-  let body: { prompt?: unknown };
+  let body: { agent?: unknown; prompt?: unknown };
   try {
-    body = (await request.json()) as { prompt?: unknown };
+    body = (await request.json()) as { agent?: unknown; prompt?: unknown };
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
   if (!prompt) {
-    return NextResponse.json({ error: "Enter a task for Claude Code." }, { status: 400 });
+    return NextResponse.json({ error: "Enter a task for a coding agent." }, { status: 400 });
   }
   if (prompt.length > MAX_PROMPT) {
     return NextResponse.json(
       { error: `Keep the task under ${MAX_PROMPT.toLocaleString()} characters.` },
       { status: 400 },
     );
+  }
+  // Omission preserves compatibility with clients created before agent choice.
+  const agent: JobAgent | null = body.agent === undefined
+    ? "claude"
+    : isJobAgent(body.agent)
+      ? body.agent
+      : null;
+  if (!agent) {
+    return NextResponse.json({ error: "Choose Claude Code or Codex." }, { status: 400 });
   }
 
   const { id } = await context.params;
@@ -54,15 +68,15 @@ export async function POST(request: Request, context: RouteContext) {
   }
   if (!STARTABLE.includes(workspace.status)) {
     return NextResponse.json(
-      { error: "The workspace must be ready before Claude Code can run." },
+      { error: "The workspace must be ready before a coding agent can run." },
       { status: 409 },
     );
   }
 
-  const env = claudeJobEnvironment();
+  const env = agentJobEnvironment(agent);
   if (Object.keys(env).length === 0) {
     return NextResponse.json(
-      { error: "Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN to run Claude Code." },
+      { error: agentCredentialMessage(agent) },
       { status: 422 },
     );
   }
@@ -70,7 +84,7 @@ export async function POST(request: Request, context: RouteContext) {
   // Single active job per workspace keeps compute and log reasoning simple.
   if (await hasActiveJob(workspace.id)) {
     return NextResponse.json(
-      { error: "A Claude job is already running in this workspace." },
+      { error: "A coding-agent job is already running in this workspace." },
       { status: 409 },
     );
   }
@@ -85,6 +99,7 @@ export async function POST(request: Request, context: RouteContext) {
   const job = await createJobRow({
     ownerId: owner.id,
     workspaceId: workspace.id,
+    agent,
     prompt,
   });
 
@@ -93,6 +108,7 @@ export async function POST(request: Request, context: RouteContext) {
       workspaceId: workspace.id,
       sandboxId,
       jobId: job.id,
+      agent,
       prompt,
       env,
     });
@@ -114,7 +130,7 @@ export async function POST(request: Request, context: RouteContext) {
       console.error(`Job ${job.id} failure state could not be saved`, updateError),
     );
     return NextResponse.json(
-      { error: "Could not start Claude Code. Check Runtime setup and try again." },
+      { error: `Could not start ${agentName(agent)}. Check Runtime setup and try again.` },
       { status: 502 },
     );
   }

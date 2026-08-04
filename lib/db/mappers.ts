@@ -46,6 +46,7 @@ export function toJob(row: Tables["jobs"]["Row"]): Job {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
+    agent: row.agent,
     status: row.status,
     prompt: row.prompt,
     logPath: row.log_path ?? "",
