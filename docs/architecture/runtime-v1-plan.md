@@ -71,9 +71,29 @@ choice, **not** a rule that all agents must be Go. The [wire protocol](./protoco
 
 Freeze the architecture only after these pass; then build Phase 1+ in order without redesigning.
 
-**Spike 1 — WebSockets through a Daytona preview URL (HIGHEST PRIORITY).**
+**Spike 1 — WebSockets through a Daytona preview URL (HIGHEST PRIORITY).** ✅ **PASSED** (2026-08-04)
 Success: Browser → WSS → Daytona reaches the agent; bidirectional; <100ms RTT; long-lived (>2h);
 reconnect works. *If this fails, the transport architecture changes.* Requires Daytona creds.
+
+### Spike 1 — findings (real Daytona sandbox, node ws echo server on port 8080)
+- **WS upgrade works through the Daytona proxy** via `getSignedPreviewUrl(port)` — form
+  `wss://{port}-{token}.daytonaproxy01.net`, **token in the subdomain, NO custom headers**
+  (browser-compatible). Bidirectional echo + reconnect both succeeded.
+- **Steady-state latency (warm socket, 50 pings, Mac→US proxy→sandbox):** avg **277ms**, p50 269,
+  p90 319, p99 363, min 250, max 363 — tight, no stalls. Intra-sandbox baseline (no proxy) ~0.04ms,
+  so the ~270ms is entirely network+proxy. Acceptable for an SSH-like interactive terminal; the
+  <100ms target is not achievable cross-region through the proxy regardless of implementation.
+- **Cold start:** first handshake ~1.4s and first few messages showed multi-second stalls that
+  settle once warm → **pre-warm the WS on workspace open** and keep it alive.
+- **Signed preview token TTL is short (~60s default):** a *new* connection after expiry gets 401,
+  but an already-open socket survives token expiry (token checked only at handshake). → mint signed
+  URLs with a longer expiry and refresh for reconnects (matches the 5-min Runtime JWT design).
+- **Idle drops:** use app-level WS ping/keepalive; full >2h soak not yet run (follow-up).
+- **Image gap:** the default Daytona snapshot has node + git + python but **no tmux** and the user is
+  **not root** (`/root` unwritable; use `$HOME`/`/tmp`). → the **Runtime Computer needs a custom
+  snapshot** with tmux + Claude Code (+ node) baked in; provisioning (Phase 3) must build/use it.
+- SDK bonus: native PTY API (`createPty`/`connectPty`/`resizePtySession`) + `createSshAccess` exist —
+  useful for Spike 2 and human-takeover.
 
 **Spike 2 — PTY + tmux (on Ubuntu, not macOS).**
 `Go → PTY → tmux → Claude → reconnect → attach`. Verify: multiple PTYs coexist; resize; UTF-8;
