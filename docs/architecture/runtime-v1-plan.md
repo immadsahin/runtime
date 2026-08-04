@@ -67,7 +67,11 @@ choice, **not** a rule that all agents must be Go. The [wire protocol](./protoco
 - **Build net-new**: PTY + tmux + WS, JSONL watcher, Go agent, terminal + conversation UI (only a static mock exists at `workspace-studio.tsx:247-253`).
 - **Factor**: duplicated git helpers across `local-provider.ts` / `modal-provider.ts` → shared module.
 
-## Phase 0 — Validation spikes (GATE: do only these until every unknown is resolved)
+## Phase 0 — Validation spikes — ✅ COMPLETE (2026-08-04)
+
+All four spikes passed. Architecture is **frozen**; `runtime-computer-v1` is the canonical image.
+Begin Phase 1 — no further architectural redesign unless a fundamental issue emerges.
+Full Spike 4 findings + scheduler recommendation: [`spike4-runtime-report.md`](./spike4-runtime-report.md).
 
 Freeze the architecture only after these pass; then build Phase 1+ in order without redesigning.
 
@@ -124,15 +128,17 @@ python 3.12.3, git + git-lfs 3.4.1, ripgrep 14.1, jq 1.7, docker CLI 29.1.3, unz
 deps deferred (optional). `runtime_computers.image_version` records the image tag (`v1`, `v2`, …) each
 computer was built from — reproducibility + upgrade path.
 
-**Spike 3 — Claude JSONL watcher.** *(partially validated locally — see findings below)*
-`Claude → ~/.claude/projects → watch → incremental parser → browser`. Verify: schema stability
-across versions; flush timing; tool events; token accounting; multiple concurrent sessions.
+**Spike 3 — Claude JSONL watcher.** ✅ **PASSED** (schema validated locally; re-confirmed live in
+Spike 4 with Claude Code 2.1.221 — incremental byte-offset tail parsed thinking/tool_use/tool_result/
+text + token accounting). See findings below.
 
-**Spike 4 — Workspace layout.** Bare `repo.git` + `workspaces/{auth,ui,security}/` worktrees, each
-with its own tmux + Claude; verify git worktree + tmux + Claude + replay coexist on one box.
+**Spike 4 — Real Claude end-to-end (subsumes workspace layout).** ✅ **PASSED** — see
+[`spike4-runtime-report.md`](./spike4-runtime-report.md). Bare `repo.git` + per-workspace worktrees
+with independent branches + fs isolation, real tool execution, JSONL pipeline, replay, `--continue`,
+failure modes, and resource profiling — all on `runtime-computer-v1`.
 
-**Spike 5 — Developer experience.** From `git clone` + `pnpm dev` to "New Workspace → Claude starts"
-in one command. If not one command, improve onboarding before building features.
+**Spike 5 — Developer experience.** ⏸ Deferred to Phase 1: from `git clone` + `pnpm dev` to
+"New Workspace → Claude starts" in one command. Requires the Phase 1 build to exist first.
 
 ### Spike 3 — findings (real session, Claude Code 2.0.24)
 - Records carry `uuid`/`parentUuid` (threading), `timestamp`, `sessionId`, `cwd`, `gitBranch`, `version`.
