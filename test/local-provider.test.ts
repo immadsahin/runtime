@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { isSafeRelativePath, parseChangedFiles } from "@/lib/runtime/local-provider";
+import { isSafeRelativePath, parseChangedFiles } from "@/lib/runtime/git";
 
 test("isSafeRelativePath accepts ordinary repository paths", () => {
   assert.equal(isSafeRelativePath("src/index.ts"), true);

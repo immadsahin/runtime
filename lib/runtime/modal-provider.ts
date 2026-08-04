@@ -1,7 +1,23 @@
-import { ModalClient, NotFoundError, type Sandbox, type Secret, type Volume } from "modal";
+import {
+  ModalClient,
+  NotFoundError,
+  type Sandbox,
+  type Secret,
+  type Volume,
+} from "modal";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
 import { agentCommand } from "@/lib/runtime/agent";
+import {
+  addWorktree,
+  cloneRepo,
+  commitAll,
+  listChangedFiles as gitListChangedFiles,
+  pushBranch,
+  readFileDiff,
+  sanitizeBranch,
+  type GitExec,
+} from "@/lib/runtime/git";
 import type {
   ChangedFile,
   CommitWorkspaceInput,
@@ -46,6 +62,21 @@ export class ModalRuntimeProvider implements RuntimeProvider {
 
   private readonly appName = optionalEnv("MODAL_APP_NAME") ?? "runtime";
 
+  /** GitExec capability for the shared git module: run argv in a sandbox.
+   * Git commands carry their own `-C`, so no workdir is needed; the auth token
+   * (when present) rides in the process environment. */
+  private gitExec(sandbox: Sandbox): GitExec {
+    return async (argv, options) => {
+      const process = await sandbox.exec(argv, { env: options?.env });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        process.stdout.readText(),
+        process.stderr.readText(),
+        process.wait(),
+      ]);
+      return { stdout, stderr, exitCode };
+    };
+  }
+
   async createWorkspace(
     input: CreateWorkspaceInput,
   ): Promise<CreateWorkspaceResult> {
@@ -61,24 +92,24 @@ export class ModalRuntimeProvider implements RuntimeProvider {
       });
       volumeAllocated = true;
       sandbox = await this.createSandbox(input.workspaceId, volume);
+      const git = this.gitExec(sandbox);
 
       await input.onPhase?.("clone");
       const repoPath = `${WORKSPACE_ROOT}/repo`;
-      await this.cloneRepository(sandbox, input.repoFullName, repoPath, input.env.GITHUB_PAT);
+      await cloneRepo(git, {
+        repoFullName: input.repoFullName,
+        dir: repoPath,
+        token: input.env.GITHUB_PAT,
+      });
 
       await input.onPhase?.("worktree");
       await run(sandbox, ["mkdir", "-p", `${WORKSPACE_ROOT}/worktrees`]);
-      await run(sandbox, [
-        "git",
-        "-C",
-        repoPath,
-        "worktree",
-        "add",
-        "-b",
-        input.branch,
+      await addWorktree(git, {
+        repoDir: repoPath,
         worktreePath,
-        `origin/${input.baseBranch}`,
-      ]);
+        branch: input.branch,
+        baseRef: `origin/${input.baseBranch}`,
+      });
 
       // The short-lived Modal Secret is injected only for this sandbox; no
       // token is written into the Volume or Git remote configuration.
@@ -97,7 +128,9 @@ export class ModalRuntimeProvider implements RuntimeProvider {
       }
 
       await input.onPhase?.("health_check");
-      await run(sandbox, ["git", "status", "--short"], { workdir: worktreePath });
+      await run(sandbox, ["git", "status", "--short"], {
+        workdir: worktreePath,
+      });
 
       await input.onPhase?.("claude_ready");
       await run(sandbox, ["claude", "--version"]);
@@ -116,15 +149,21 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     } catch (error) {
       if (sandbox) {
         await sandbox.terminate().catch((terminationError: unknown) => {
-          console.error("Could not terminate failed Modal workspace", terminationError);
+          console.error(
+            "Could not terminate failed Modal workspace",
+            terminationError,
+          );
         });
       }
       if (volumeAllocated) {
-        await this.client.volumes.delete(volumeName, { allowMissing: true }).catch(
-          (deletionError: unknown) => {
-            console.error("Could not delete failed Modal workspace volume", deletionError);
-          },
-        );
+        await this.client.volumes
+          .delete(volumeName, { allowMissing: true })
+          .catch((deletionError: unknown) => {
+            console.error(
+              "Could not delete failed Modal workspace volume",
+              deletionError,
+            );
+          });
       }
       throw error;
     }
@@ -161,7 +200,15 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     const secret = await this.secretFor(input.env);
     await run(
       sandbox,
-      ["bash", "-lc", modalDetachedJobScript(agentCommand(input.agent, input), logPath, resultPath)],
+      [
+        "bash",
+        "-lc",
+        modalDetachedJobScript(
+          agentCommand(input.agent, input),
+          logPath,
+          resultPath,
+        ),
+      ],
       { secrets: secret ? [secret] : undefined },
     );
     sandbox.detach();
@@ -202,7 +249,11 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     while (!input.signal?.aborted) {
       try {
         const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
-        const output = await run(sandbox, ["bash", "-lc", `wc -c < ${shellQuote(expected)}`]);
+        const output = await run(sandbox, [
+          "bash",
+          "-lc",
+          `wc -c < ${shellQuote(expected)}`,
+        ]);
         const size = Number(output.trim());
         if (Number.isFinite(size) && size > offset) {
           const chunk = await run(sandbox, [
@@ -225,8 +276,8 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     sandboxId: string;
   }): Promise<ChangedFile[]> {
     const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
-    const output = await run(sandbox, ["bash", "-lc", `git -C ${modalWorktree()} status --porcelain=v1 -z --untracked-files=all`]);
-    return parseChangedFiles(output);
+    const worktree = await this.worktreePath(sandbox);
+    return gitListChangedFiles(this.gitExec(sandbox), { worktree });
   }
 
   async readChangedFileDiff(input: {
@@ -234,44 +285,32 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     sandboxId: string;
     path: string;
   }): Promise<string> {
-    if (!isSafeRelativePath(input.path)) {
-      throw new Error("Invalid changed file path");
-    }
-    const changes = await this.listChangedFiles(input);
-    const file = changes.find((change) => change.path === input.path);
-    if (!file) throw new Error("File is not part of this workspace change set");
-    if (file.status === "untracked") return "This untracked file has no Git diff yet.";
     const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
-    const diff = await run(sandbox, [
-      "bash",
-      "-lc",
-      `git --literal-pathspecs -C ${modalWorktree()} diff --no-ext-diff --no-textconv -- ${shellQuote(input.path)} | head -c 200000`,
-    ]);
-    return diff;
+    const worktree = await this.worktreePath(sandbox);
+    return readFileDiff(this.gitExec(sandbox), { worktree, path: input.path });
   }
 
-  async commitWorkspace(input: CommitWorkspaceInput): Promise<CommitWorkspaceResult> {
+  async commitWorkspace(
+    input: CommitWorkspaceInput,
+  ): Promise<CommitWorkspaceResult> {
     const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
-    const env = {
-      GIT_AUTHOR_NAME: input.author.name,
-      GIT_AUTHOR_EMAIL: input.author.email,
-      GIT_COMMITTER_NAME: input.author.name,
-      GIT_COMMITTER_EMAIL: input.author.email,
-    };
-    await run(sandbox, ["bash", "-lc", `git -C ${modalWorktree()} add -A && git -C ${modalWorktree()} commit -m ${shellQuote(input.message)}`], { env });
-    const sha = (await run(sandbox, ["bash", "-lc", `git -C ${modalWorktree()} rev-parse HEAD`])).trim();
-    return { sha };
+    const worktree = await this.worktreePath(sandbox);
+    return commitAll(this.gitExec(sandbox), {
+      worktree,
+      message: input.message,
+      author: input.author,
+    });
   }
 
   async pushWorkspaceBranch(input: PushWorkspaceBranchInput): Promise<void> {
     const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
-    const remote = `https://github.com/${input.repoFullName}.git`;
-    const secret = await this.secretFor({ GITHUB_PAT: input.githubToken });
-    await run(
-      sandbox,
-      ["bash", "-lc", pushScript(modalWorktree(), remote, input.branch)],
-      { secrets: secret ? [secret] : undefined },
-    );
+    const worktree = await this.worktreePath(sandbox);
+    await pushBranch(this.gitExec(sandbox), {
+      worktree,
+      repoFullName: input.repoFullName,
+      branch: input.branch,
+      token: input.githubToken,
+    });
   }
 
   async suspendWorkspace(input: {
@@ -311,7 +350,21 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     input: CreatePullRequestInput,
   ): Promise<CreatePullRequestResult> {
     void input;
-    throw new Error("Pull requests are created through Runtime's GitHub API path.");
+    throw new Error(
+      "Pull requests are created through Runtime's GitHub API path.",
+    );
+  }
+
+  /** The single worktree directory under the Volume, located at call time. */
+  private async worktreePath(sandbox: Sandbox): Promise<string> {
+    const out = await run(sandbox, [
+      "bash",
+      "-lc",
+      "find /runtime/worktrees -mindepth 1 -maxdepth 1 -type d -print -quit",
+    ]);
+    const worktree = out.trim();
+    if (!worktree) throw new Error("No worktree found for workspace");
+    return worktree;
   }
 
   private async createSandbox(
@@ -336,53 +389,17 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     });
   }
 
-  private async cloneRepository(
-    sandbox: Sandbox,
-    repoFullName: string,
-    repoPath: string,
-    githubToken?: string,
-  ): Promise<void> {
-    const secret = githubToken ? await this.secretFor({ GITHUB_PAT: githubToken }) : undefined;
-    await run(sandbox, ["bash", "-lc", cloneScript(repoFullName, repoPath)], {
-      secrets: secret ? [secret] : undefined,
-    });
-  }
-
-  private async secretFor(env: Record<string, string>): Promise<Secret | undefined> {
-    return Object.keys(env).length ? this.client.secrets.fromObject(env) : undefined;
+  private async secretFor(
+    env: Record<string, string>,
+  ): Promise<Secret | undefined> {
+    return Object.keys(env).length
+      ? this.client.secrets.fromObject(env)
+      : undefined;
   }
 }
 
 function workspaceVolumeName(workspaceId: string): string {
   return `runtime-workspace-${workspaceId}`;
-}
-
-function sanitizeBranch(branch: string): string {
-  return branch.replace(/[^a-zA-Z0-9._-]/g, "-");
-}
-
-function cloneScript(repoFullName: string, repoPath: string): string {
-  const remote = `https://github.com/${repoFullName}.git`;
-  return [
-    "set -euo pipefail",
-    `if [ -d ${shellQuote(`${repoPath}/.git`)} ]; then exit 0; fi`,
-    "mkdir -p /tmp/runtime-git-askpass",
-    "cat > /tmp/runtime-git-askpass/askpass <<'EOF'",
-    "#!/bin/sh",
-    "case \"$1\" in",
-    "  *Username*) printf '%s' x-access-token ;;",
-    "  *) printf '%s' \"${GITHUB_PAT:-}\" ;;",
-    "esac",
-    "EOF",
-    "chmod 700 /tmp/runtime-git-askpass/askpass",
-    "if [ -n \"${GITHUB_PAT:-}\" ]; then",
-    `  GIT_ASKPASS=/tmp/runtime-git-askpass/askpass GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 git clone ${shellQuote(remote)} ${shellQuote(repoPath)}`,
-    "else",
-    `  git clone ${shellQuote(remote)} ${shellQuote(repoPath)}`,
-    "fi",
-    `git -C ${shellQuote(repoPath)} remote set-url origin ${shellQuote(remote)}`,
-    "rm -rf /tmp/runtime-git-askpass",
-  ].join("\n");
 }
 
 function defaultInstallCommand(): string {
@@ -421,11 +438,11 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function modalWorktree(): string {
-  return '"$(find /runtime/worktrees -mindepth 1 -maxdepth 1 -type d -print -quit)"';
-}
-
-function modalDetachedJobScript(command: string, logPath: string, resultPath: string): string {
+function modalDetachedJobScript(
+  command: string,
+  logPath: string,
+  resultPath: string,
+): string {
   const log = shellQuote(logPath);
   const result = shellQuote(resultPath);
   const runner = [
@@ -439,66 +456,15 @@ function modalDetachedJobScript(command: string, logPath: string, resultPath: st
   return `mkdir -p ${shellQuote(`${WORKSPACE_ROOT}/.runtime/logs`)}; nohup bash -lc ${shellQuote(runner)} >/dev/null 2>&1 &`;
 }
 
-function pushScript(worktree: string, remote: string, branch: string): string {
-  const askpass = "/tmp/runtime-git-askpass";
-  return [
-    "set -euo pipefail",
-    `git -C ${worktree} remote set-url origin ${shellQuote(remote)}`,
-    `cat > ${askpass} <<'EOF'`,
-    "#!/bin/sh",
-    "case \"$1\" in",
-    "  *Username*) printf '%s' x-access-token ;;",
-    "  *) printf '%s' \"${GITHUB_PAT:-}\" ;;",
-    "esac",
-    "EOF",
-    `chmod 700 ${askpass}`,
-    `GIT_ASKPASS=${askpass} GIT_ASKPASS_REQUIRE=force GIT_TERMINAL_PROMPT=0 git -c core.hooksPath=/dev/null -c credential.helper= -C ${worktree} push -u origin ${shellQuote(branch)}`,
-    `rm -f ${askpass}`,
-    `git -C ${worktree} remote set-url origin ${shellQuote(remote)}`,
-  ].join("\n");
-}
-
-function parseChangedFiles(output: string): ChangedFile[] {
-  const entries = output.split("\0").filter(Boolean);
-  const files: ChangedFile[] = [];
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    const code = entry.slice(0, 2);
-    const filePath = entry.slice(3);
-    if (!filePath) continue;
-    if (code.includes("R") || code.includes("C")) index += 1;
-    files.push({
-      path: filePath,
-      status:
-        code === "??" ? "untracked" :
-        code.includes("A") ? "added" :
-        code.includes("D") ? "deleted" :
-        code.includes("R") || code.includes("C") ? "renamed" : "modified",
-      additions: 0,
-      deletions: 0,
-    });
-  }
-  return files.slice(0, 500);
-}
-
 function isJobResult(value: unknown): value is JobResult {
   if (!value || typeof value !== "object") return false;
   const result = value as Record<string, unknown>;
   return (
-    (result.status === "succeeded" || result.status === "failed" || result.status === "cancelled") &&
+    (result.status === "succeeded" ||
+      result.status === "failed" ||
+      result.status === "cancelled") &&
     (typeof result.exitCode === "number" || result.exitCode === null) &&
     typeof result.finishedAt === "string"
-  );
-}
-
-/** Preserve one provider-owned changed path; reject traversal and Git magic. */
-function isSafeRelativePath(filePath: string): boolean {
-  return (
-    Boolean(filePath) &&
-    !filePath.includes("\0") &&
-    !filePath.startsWith("/") &&
-    !filePath.startsWith(":") &&
-    filePath.split(/[\\/]/).every((part) => part !== "" && part !== "." && part !== "..")
   );
 }
 

@@ -5,6 +5,16 @@ import os from "node:os";
 import path from "node:path";
 
 import { agentCommand } from "@/lib/runtime/agent";
+import {
+  addWorktree,
+  cloneRepo,
+  commitAll,
+  listChangedFiles as gitListChangedFiles,
+  pushBranch,
+  readFileDiff,
+  sanitizeBranch,
+  type GitExec,
+} from "@/lib/runtime/git";
 import type {
   ChangedFile,
   CommitWorkspaceInput,
@@ -59,6 +69,26 @@ const SAFE_CHILD_ENV_KEYS = [
 export class LocalRuntimeProvider implements RuntimeProvider {
   readonly name = "local" as const;
 
+  /** GitExec capability for the shared git module: a plain child process on
+   * this host with a scrubbed environment. Git commands carry their own `-C`,
+   * so no cwd is needed. */
+  private readonly git: GitExec = (argv, options) =>
+    new Promise((resolve) => {
+      const child = spawn(argv[0], argv.slice(1), {
+        env: { ...safeChildEnvironment(), ...(options?.env ?? {}) },
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      child.stderr.on("data", (d) => (stderr += d));
+      child.on("error", (e) =>
+        resolve({ stdout, stderr: stderr || String(e), exitCode: 1 }),
+      );
+      child.on("close", (code) =>
+        resolve({ stdout, stderr, exitCode: code ?? 1 }),
+      );
+    });
+
   private paths(workspaceId: string) {
     const base = path.join(ROOT, workspaceId);
     return {
@@ -81,46 +111,23 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     await fs.mkdir(p.logs, { recursive: true });
 
     await input.onPhase?.("clone");
-    const token = input.env.GITHUB_PAT;
-    const remote = `https://github.com/${input.repoFullName}.git`;
     if (!(await exists(p.repo))) {
-      const gitAuth = token ? await createGitAskPass(p.base, token) : null;
-      try {
-        await run("git", ["clone", remote, p.repo], {
-          cwd: p.base,
-          env: gitAuth?.env,
-        });
-      } finally {
-        await gitAuth?.remove();
-      }
-      // Never persist the token in git config.
-      await run(
-        "git",
-        [
-          "remote",
-          "set-url",
-          "origin",
-          `https://github.com/${input.repoFullName}.git`,
-        ],
-        { cwd: p.repo },
-      );
+      await cloneRepo(this.git, {
+        repoFullName: input.repoFullName,
+        dir: p.repo,
+        token: input.env.GITHUB_PAT,
+      });
     }
 
     await input.onPhase?.("worktree");
     const worktreePath = path.join(p.worktrees, sanitizeBranch(input.branch));
     if (!(await exists(worktreePath))) {
-      await run(
-        "git",
-        [
-          "worktree",
-          "add",
-          "-b",
-          input.branch,
-          worktreePath,
-          `origin/${input.baseBranch}`,
-        ],
-        { cwd: p.repo },
-      );
+      await addWorktree(this.git, {
+        repoDir: p.repo,
+        worktreePath,
+        branch: input.branch,
+        baseRef: `origin/${input.baseBranch}`,
+      });
     }
 
     await input.onPhase?.("secrets");
@@ -192,10 +199,7 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     // Detached: the job outlives this HTTP request, exactly like Modal.
     const child = spawn(
       "bash",
-      [
-        "-lc",
-        `${sourceEnvironmentCommand(p.env, true)} ${completion}`,
-      ],
+      ["-lc", `${sourceEnvironmentCommand(p.env, true)} ${completion}`],
       {
         cwd: worktree ?? p.base,
         detached: true,
@@ -273,9 +277,7 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     // No compute to release locally.
   }
 
-  async destroyWorkspace(input: {
-    workspaceId: string;
-  }): Promise<void> {
+  async destroyWorkspace(input: { workspaceId: string }): Promise<void> {
     await fs.rm(this.paths(input.workspaceId).base, {
       recursive: true,
       force: true,
@@ -286,12 +288,7 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     workspaceId: string;
   }): Promise<ChangedFile[]> {
     const worktree = await this.requireWorktree(input.workspaceId);
-    const output = await run(
-      "git",
-      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-      { cwd: worktree },
-    );
-    return parseChangedFiles(output);
+    return gitListChangedFiles(this.git, { worktree });
   }
 
   async readChangedFileDiff(input: {
@@ -299,65 +296,37 @@ export class LocalRuntimeProvider implements RuntimeProvider {
     path: string;
   }): Promise<string> {
     const worktree = await this.requireWorktree(input.workspaceId);
-    const changed = await this.listChangedFiles({ workspaceId: input.workspaceId });
-    if (!changed.some((file) => file.path === input.path)) {
-      throw new Error("File is not part of this workspace change set");
-    }
-    if (!isSafeRelativePath(input.path)) {
-      throw new Error("Invalid changed file path");
-    }
-    if (changed.find((file) => file.path === input.path)?.status === "untracked") {
-      return "This untracked file has no Git diff yet.";
-    }
-    const diff = await run(
-      "git",
-      ["--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--", input.path],
-      { cwd: worktree },
-    );
-    return limitText(diff, 200_000);
+    return readFileDiff(this.git, { worktree, path: input.path });
   }
 
-  async commitWorkspace(input: CommitWorkspaceInput): Promise<CommitWorkspaceResult> {
+  async commitWorkspace(
+    input: CommitWorkspaceInput,
+  ): Promise<CommitWorkspaceResult> {
     const worktree = await this.requireWorktree(input.workspaceId);
-    await run("git", ["add", "-A"], { cwd: worktree });
-    await run("git", ["commit", "-m", input.message], {
-      cwd: worktree,
-      env: safeChildEnvironment({
-        GIT_AUTHOR_NAME: input.author.name,
-        GIT_AUTHOR_EMAIL: input.author.email,
-        GIT_COMMITTER_NAME: input.author.name,
-        GIT_COMMITTER_EMAIL: input.author.email,
-      }),
+    return commitAll(this.git, {
+      worktree,
+      message: input.message,
+      author: input.author,
     });
-    const sha = (await run("git", ["rev-parse", "HEAD"], { cwd: worktree })).trim();
-    return { sha };
   }
 
   async pushWorkspaceBranch(input: PushWorkspaceBranchInput): Promise<void> {
     const worktree = await this.requireWorktree(input.workspaceId);
-    const remote = `https://github.com/${input.repoFullName}.git`;
-    const gitAuth = await createGitAskPass(this.paths(input.workspaceId).base, input.githubToken);
-    try {
-      await run("git", ["remote", "set-url", "origin", remote], { cwd: worktree });
-      await run("git", [
-        "-c", "core.hooksPath=/dev/null",
-        "-c", "credential.helper=",
-        "push", "-u", "origin", input.branch,
-      ], {
-        cwd: worktree,
-        env: gitAuth.env,
-      });
-    } finally {
-      await gitAuth.remove();
-      await run("git", ["remote", "set-url", "origin", remote], { cwd: worktree });
-    }
+    await pushBranch(this.git, {
+      worktree,
+      repoFullName: input.repoFullName,
+      branch: input.branch,
+      token: input.githubToken,
+    });
   }
 
   async createPullRequest(
     input: CreatePullRequestInput,
   ): Promise<CreatePullRequestResult> {
     void input;
-    throw new Error("Pull requests are created through Runtime's GitHub API path.");
+    throw new Error(
+      "Pull requests are created through Runtime's GitHub API path.",
+    );
   }
 
   private async requireWorktree(workspaceId: string): Promise<string> {
@@ -446,10 +415,6 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-function sanitizeBranch(branch: string): string {
-  return branch.replace(/[^a-zA-Z0-9._-]/g, "-");
-}
-
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -471,33 +436,16 @@ async function writeEnvironmentFile(
   }
   await fs.writeFile(
     file,
-    entries.map(([key, value]) => `export ${key}=${shellQuote(value)}`).join("\n"),
+    entries
+      .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
+      .join("\n"),
     { mode: 0o600 },
   );
 }
 
-async function createGitAskPass(base: string, token: string) {
-  const file = path.join(base, ".runtime", "git-askpass.sh");
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(
-    file,
-    "#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s' x-access-token ;;\n  *) printf '%s' \"$RUNTIME_GIT_PASSWORD\" ;;\nesac\n",
-    { mode: 0o700 },
-  );
-
-  return {
-    env: {
-      ...safeChildEnvironment(),
-      GIT_ASKPASS: file,
-      GIT_ASKPASS_REQUIRE: "force",
-      GIT_TERMINAL_PROMPT: "0",
-      RUNTIME_GIT_PASSWORD: token,
-    },
-    remove: () => fs.rm(file, { force: true }),
-  };
-}
-
-function safeChildEnvironment(additions?: Record<string, string>): NodeJS.ProcessEnv {
+function safeChildEnvironment(
+  additions?: Record<string, string>,
+): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {
     NODE_ENV: process.env.NODE_ENV ?? "production",
   };
@@ -508,7 +456,11 @@ function safeChildEnvironment(additions?: Record<string, string>): NodeJS.Proces
   return additions ? Object.assign(environment, additions) : environment;
 }
 
-function completionScript(command: string, logPath: string, resultPath: string): string {
+function completionScript(
+  command: string,
+  logPath: string,
+  resultPath: string,
+): string {
   const log = shellQuote(logPath);
   const result = shellQuote(resultPath);
   return [
@@ -526,47 +478,11 @@ function isJobResult(value: unknown): value is JobResult {
   if (!value || typeof value !== "object") return false;
   const result = value as Record<string, unknown>;
   return (
-    (result.status === "succeeded" || result.status === "failed" || result.status === "cancelled") &&
+    (result.status === "succeeded" ||
+      result.status === "failed" ||
+      result.status === "cancelled") &&
     (typeof result.exitCode === "number" || result.exitCode === null) &&
     typeof result.finishedAt === "string"
-  );
-}
-
-export function parseChangedFiles(output: string): ChangedFile[] {
-  const entries = output.split("\0").filter(Boolean);
-  const files: ChangedFile[] = [];
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    const code = entry.slice(0, 2);
-    const filePath = entry.slice(3);
-    if (!filePath) continue;
-    if (code[0] === "R" || code[0] === "C" || code[1] === "R" || code[1] === "C") {
-      index += 1; // porcelain v1 -z emits the original name as the next field.
-    }
-    const status: ChangedFile["status"] =
-      code === "??" ? "untracked" :
-      code.includes("A") ? "added" :
-      code.includes("D") ? "deleted" :
-      code.includes("R") || code.includes("C") ? "renamed" : "modified";
-    files.push({ path: filePath, status, additions: 0, deletions: 0 });
-  }
-  return files.slice(0, 500);
-}
-
-function limitText(value: string, maxBytes: number): string {
-  return Buffer.byteLength(value, "utf8") <= maxBytes
-    ? value
-    : `${Buffer.from(value, "utf8").subarray(0, maxBytes).toString("utf8")}\n\n… diff truncated by Runtime …`;
-}
-
-/** Reject traversal and Git pathspec magic before invoking Git with a user selection. */
-export function isSafeRelativePath(filePath: string): boolean {
-  return (
-    Boolean(filePath) &&
-    !filePath.includes("\0") &&
-    !path.isAbsolute(filePath) &&
-    !filePath.startsWith(":") &&
-    filePath.split(/[\\/]/).every((part) => part !== "" && part !== "." && part !== "..")
   );
 }
 
