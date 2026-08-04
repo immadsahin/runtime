@@ -95,9 +95,34 @@ reconnect works. *If this fails, the transport architecture changes.* Requires D
 - SDK bonus: native PTY API (`createPty`/`connectPty`/`resizePtySession`) + `createSshAccess` exist —
   useful for Spike 2 and human-takeover.
 
-**Spike 2 — PTY + tmux (on Ubuntu, not macOS).**
+**Spike 2 — PTY + tmux (on Ubuntu, not macOS).** ✅ **PASSED** (2026-08-04)
 `Go → PTY → tmux → Claude → reconnect → attach`. Verify: multiple PTYs coexist; resize; UTF-8;
 copy/paste; process-exit detection. Run on the Daytona box (macOS behavior is not a valid signal).
+
+### Spike 2 — findings (sandbox from `runtime-computer-v1`, fake Claude = python loop, no key)
+All core mechanics validated: ✅ tmux session lifecycle · ✅ 4 concurrent sessions · ✅ detached
+survival (processes persist with no client) · ✅ attach/detach/**reconnect** (PTY survives disconnect)
+· ✅ **resize** propagation (tmux client → 140x40) · ✅ **UTF-8** stdin echo + output round-trip
+(`echo> héllo-世界-🚀 ✓`, needs a streaming decoder to avoid chunk-boundary splits) · ✅ **exit
+detection** (process death *and* `quit` input remove the session) · ✅ **crash isolation** (kill one
+pane pid → others alive) · ✅ concurrent multi-PTY streaming, **no head-of-line blocking**.
+
+Operational measurements (2 vCPU / 4 GiB cgroup — the modest default tier):
+- Sandbox limits confirmed at cgroup level: `memory.max` = 4 GiB, `cpu.max` = 2.0 CPUs.
+- Idle baseline: ~35 MB memory, **~1% CPU**. Four **fake** sessions: +17.9 MB total, ~1.3% CPU
+  (fake Claude is a sleeping python loop — light by construction).
+- **Caveat:** fake-Claude footprints prove *runtime headroom + mechanics*, NOT real cost. Real Claude
+  Code is a Node process (idle ~100–300 MB, CPU spikes during inference/tool use) — measure actual
+  RAM/CPU per session in **Spike 4** before sizing the scheduler / per-computer session cap.
+- tmux survives with no client attached ⇒ it will survive a `runtime-agent` restart (server is
+  independent of the spawning process); PTY survives browser reconnect. Both confirmed.
+
+### Canonical image manifest — `runtime-computer-v1` (snapshot id a31131cc…, active)
+Base ubuntu:24.04, non-root user. Installed & version-verified: tmux 3.4, node 24.19, npm, go 1.22.2,
+python 3.12.3, git + git-lfs 3.4.1, ripgrep 14.1, jq 1.7, docker CLI 29.1.3, unzip, curl, and
+**Claude Code 2.1.221**. Zero bootstrapping needed before launching a workspace. Playwright browser
+deps deferred (optional). `runtime_computers.image_version` records the image tag (`v1`, `v2`, …) each
+computer was built from — reproducibility + upgrade path.
 
 **Spike 3 — Claude JSONL watcher.** *(partially validated locally — see findings below)*
 `Claude → ~/.claude/projects → watch → incremental parser → browser`. Verify: schema stability
