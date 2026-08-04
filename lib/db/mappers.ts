@@ -1,5 +1,11 @@
 import type { Database } from "@/lib/supabase/database.types";
-import type { Job, Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import type {
+  Job,
+  Project,
+  RuntimeComputer,
+  Workspace,
+  WorkspacePullRequest,
+} from "@/lib/runtime/types";
 
 type Tables = Database["public"]["Tables"];
 
@@ -35,8 +41,33 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     worktreePath: row.worktree_path ?? "",
     sandboxId: row.sandbox_id,
     volumeName: row.volume_name,
+    computerId: row.computer_id,
+    tmuxSession: row.tmux_session,
+    agentWorkspaceId: row.agent_workspace_id,
     lastActiveAt: row.last_active_at,
     errorMessage: row.error_message,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * DB row -> domain object. `agent_secret` is intentionally omitted: it is
+ * server-only and must never reach the domain/UI layer. Read it directly from
+ * the row when minting or verifying Runtime tokens.
+ */
+export function toRuntimeComputer(
+  row: Tables["runtime_computers"]["Row"],
+): RuntimeComputer {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    status: row.status,
+    imageVersion: row.image_version,
+    daytonaSandboxId: row.daytona_sandbox_id,
+    agentBaseUrl: row.agent_base_url,
+    errorMessage: row.error_message,
+    lastActiveAt: row.last_active_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

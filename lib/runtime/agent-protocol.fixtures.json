@@ -1,0 +1,54 @@
+{
+  "RuntimeTokenClaims": [
+    { "workspaceId": "ws-1", "projectId": "proj-1", "computerId": "rc-1", "userId": "u-1", "exp": 1900000000 }
+  ],
+  "PtyClientMessage": [
+    { "t": "input", "data": "ls -la\n" },
+    { "t": "resize", "cols": 120, "rows": 34 },
+    { "t": "ping" }
+  ],
+  "PtyServerMessage": [
+    { "t": "output", "data": "hello-from-agent", "seq": 0 },
+    { "t": "role", "writer": true },
+    { "t": "exit", "code": 0 },
+    { "t": "pong" }
+  ],
+  "CreateWorkspaceRequest": [
+    { "workspaceId": "ws-1", "repoFullName": "acme/app", "branch": "feat/x", "baseBranch": "main" }
+  ],
+  "WorkspaceActionRequest": [
+    { "workspaceId": "ws-1" }
+  ],
+  "ErrorResponse": [
+    { "error": { "code": "WORKSPACE_NOT_FOUND", "message": "no such workspace" } },
+    { "error": { "code": "AGENT_UNREACHABLE", "message": "agent did not respond" } }
+  ],
+  "ConversationMessage": [
+    {
+      "t": "message",
+      "uuid": "uuid-1",
+      "parentUuid": null,
+      "role": "assistant",
+      "timestamp": "2026-08-05T00:00:00Z",
+      "content": [
+        { "type": "thinking" },
+        { "type": "text", "text": "Adding the function." },
+        { "type": "tool_use", "id": "tool-1", "name": "Bash", "input": { "command": "ls" } },
+        { "type": "tool_result", "toolUseId": "tool-1", "content": "ok" }
+      ]
+    }
+  ],
+  "TokenUsage": [
+    {
+      "t": "usage",
+      "input_tokens": 10,
+      "output_tokens": 579,
+      "cache_creation_input_tokens": 8849,
+      "cache_read_input_tokens": 152345,
+      "service_tier": "standard"
+    }
+  ],
+  "WorkspaceStateChanged": [
+    { "t": "state", "workspaceId": "ws-1", "state": "running" }
+  ]
+}

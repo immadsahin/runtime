@@ -43,6 +43,12 @@ export type JobStatusDb =
 
 export type JobAgentDb = "claude" | "codex";
 
+export type RuntimeComputerStatusDb =
+  | "provisioning"
+  | "ready"
+  | "error"
+  | "stopped";
+
 export type LinearIssueRef = {
   id: string;
   identifier: string;
@@ -82,6 +88,24 @@ type WorkspaceRow = {
   volume_name: string | null;
   provider: string;
   install_command: string | null;
+  error_message: string | null;
+  computer_id: string | null;
+  tmux_session: string | null;
+  agent_workspace_id: string | null;
+  last_active_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type RuntimeComputerRow = {
+  id: string;
+  owner_id: string;
+  project_id: string;
+  status: RuntimeComputerStatusDb;
+  image_version: string;
+  daytona_sandbox_id: string | null;
+  agent_base_url: string | null;
+  agent_secret: string | null;
   error_message: string | null;
   last_active_at: string | null;
   created_at: string;
@@ -149,6 +173,27 @@ export type Database = {
             referencedRelation: "projects";
             referencedColumns: ["owner_id", "id"];
           },
+          {
+            foreignKeyName: "workspaces_computer_fkey";
+            columns: ["owner_id", "computer_id"];
+            isOneToOne: false;
+            referencedRelation: "runtime_computers";
+            referencedColumns: ["owner_id", "id"];
+          },
+        ];
+      };
+      runtime_computers: {
+        Row: RuntimeComputerRow;
+        Insert: Insert<RuntimeComputerRow, "owner_id" | "project_id">;
+        Update: Partial<RuntimeComputerRow>;
+        Relationships: [
+          {
+            foreignKeyName: "runtime_computers_owner_project_fkey";
+            columns: ["owner_id", "project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["owner_id", "id"];
+          },
         ];
       };
       jobs: {
@@ -189,6 +234,7 @@ export type Database = {
       workspace_status: WorkspaceStatusDb;
       provision_phase: ProvisionPhaseDb;
       job_status: JobStatusDb;
+      runtime_computer_status: RuntimeComputerStatusDb;
     };
     CompositeTypes: Record<never, never>;
   };
