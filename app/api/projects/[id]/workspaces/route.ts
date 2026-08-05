@@ -11,6 +11,10 @@ import {
 import { optionalEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
+import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { runtimeSessionEnvironment } from "@/lib/runtime/ensure-runtime-computer";
+import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { ProvisionPhase } from "@/lib/runtime/types";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 
@@ -123,6 +127,60 @@ export async function POST(request: Request, context: RouteContext) {
   };
 
   try {
+    if (provider instanceof DaytonaRuntimeProvider) {
+      const githubToken = optionalEnv("GITHUB_PAT");
+      const ensured = await ensureProjectRuntimeComputer(provider, {
+        projectId: project.id,
+        repoFullName: project.fullName,
+        githubToken,
+        sessionEnv: runtimeSessionEnvironment(),
+      });
+      const computer = ensured.computer;
+      if (!computer.daytonaSandboxId) {
+        throw new Error("Ready Runtime Computer has no Daytona sandbox id.");
+      }
+
+      // Initial provisioning clones the mirror. Every later workspace refreshes
+      // it before the agent branches from the project's default branch.
+      if (!ensured.provisioned) {
+        await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
+      }
+
+      const target = await provider.agentTarget(
+        computer.daytonaSandboxId,
+        ensured.agentSecret,
+      );
+      const identity: WorkspaceIdentity = {
+        workspaceId: workspace.id,
+        projectId: project.id,
+        computerId: computer.id,
+        userId: owner.id,
+      };
+      const agent = new AgentClient(target);
+      const created = await agent.createWorkspace(
+        {
+          workspaceId: workspace.id,
+          repoFullName: project.fullName,
+          baseBranch: project.defaultBranch,
+          branch: workspace.branch,
+        },
+        identity,
+      );
+      await agent.startWorkspace(identity);
+
+      await updateWorkspace(workspace.id, {
+        status: "ready",
+        phase: "claude_ready",
+        computerId: computer.id,
+        tmuxSession: `ws-${workspace.id}`,
+        agentWorkspaceId: workspace.id,
+        worktreePath: created.worktree,
+        errorMessage: null,
+        touchActive: true,
+      });
+      return NextResponse.json({ workspace: { id: workspace.id } }, { status: 201 });
+    }
+
     const result = await provider.createWorkspace({
       workspaceId: workspace.id,
       repoFullName: project.fullName,
