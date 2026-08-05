@@ -5,7 +5,13 @@ import {
   toRuntimeComputer,
   toWorkspace,
   toWorkspacePullRequest,
+  toWorkspaceSnapshot,
 } from "@/lib/db/mappers";
+import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
+import type {
+  ArchivePolicy,
+  WorkspaceSnapshot,
+} from "@/lib/runtime/snapshot/types";
 import type {
   Job,
   JobAgent,
@@ -562,4 +568,41 @@ export async function createWorkspacePullRequest(input: {
     .single();
   if (error) throw error;
   return toWorkspacePullRequest(data);
+}
+
+// --- snapshots -------------------------------------------------------------
+
+/**
+ * Insert the DERIVED index row for a Workspace Snapshot after the agent has
+ * uploaded its artifacts (manifest last). The canonical Snapshot lives in
+ * storage; this row caches the manifest for cheap listing and carries the
+ * retention `policy` (v0 always `manual_only`). `archivedAt` and `storagePath`
+ * must be the same values Next used to mint the upload URLs, so the row and the
+ * stored objects agree.
+ */
+export async function createWorkspaceSnapshot(input: {
+  ownerId: string;
+  workspaceId: string;
+  archivedAt: string;
+  storagePath: string;
+  manifest: SnapshotManifest;
+  policy?: ArchivePolicy;
+  retentionDays?: number | null;
+}): Promise<WorkspaceSnapshot> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workspace_snapshots")
+    .insert({
+      owner_id: input.ownerId,
+      workspace_id: input.workspaceId,
+      archived_at: input.archivedAt,
+      storage_path: input.storagePath,
+      manifest: input.manifest,
+      policy: input.policy ?? "manual_only",
+      retention_days: input.retentionDays ?? null,
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return toWorkspaceSnapshot(data);
 }

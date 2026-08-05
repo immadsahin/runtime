@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import {
+  createWorkspaceSnapshot,
   getRuntimeComputerByProject,
   getWorkspace,
   readRuntimeComputerSecret,
@@ -11,17 +12,22 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { mintSnapshotUpload } from "@/lib/runtime/storage";
+import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
-type LifecycleAction = "resume" | "suspend" | "destroy";
+type LifecycleAction = "resume" | "suspend" | "destroy" | "archive";
 
 function actionFor(body: unknown): LifecycleAction | null {
   if (!body || typeof body !== "object" || !("action" in body)) return null;
   const action = body.action;
-  return action === "resume" || action === "suspend" || action === "destroy"
+  return action === "resume" ||
+    action === "suspend" ||
+    action === "destroy" ||
+    action === "archive"
     ? action
     : null;
 }
@@ -89,7 +95,10 @@ export async function POST(request: Request, context: RouteContext) {
     // Handled below as a deliberately generic bad request.
   }
   if (!action) {
-    return NextResponse.json({ error: "Use resume, suspend, or destroy." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Use resume, suspend, destroy, or archive." },
+      { status: 400 },
+    );
   }
 
   const { id } = await context.params;
@@ -106,6 +115,14 @@ export async function POST(request: Request, context: RouteContext) {
     return daytonaLifecycle(action, workspace, provider, owner.id);
   }
 
+  // Archive produces a Snapshot from the runtime-agent's live session; only the
+  // Daytona-backed Runtime provides one. Legacy providers can't archive.
+  if (action === "archive") {
+    return NextResponse.json(
+      { error: "Archiving is only supported on Runtime workspaces." },
+      { status: 409 },
+    );
+  }
   if (action === "resume") return resumeWorkspace(workspace, provider);
   if (action === "suspend") return suspendWorkspace(workspace, provider);
   return destroyWorkspace(workspace, provider);
@@ -119,7 +136,67 @@ async function daytonaLifecycle(
 ) {
   if (action === "resume") return resumeDaytonaWorkspace(workspace, provider, userId);
   if (action === "suspend") return suspendDaytonaWorkspace(workspace, provider, userId);
+  if (action === "archive") return archiveDaytonaWorkspace(workspace, provider, userId);
   return destroyDaytonaWorkspace(workspace, provider, userId);
+}
+
+/**
+ * Archive → produce a Workspace Snapshot. Next mints one signed upload URL per
+ * artifact, the agent captures + uploads them (manifest last) and returns the
+ * manifest, then Next caches it on a `workspace_snapshots` row and marks the
+ * workspace `archived`. The worktree is intentionally kept (Restore reclaims it
+ * later), so an archived workspace is revivable — not destroyed.
+ */
+async function archiveDaytonaWorkspace(
+  workspace: Workspace,
+  provider: DaytonaRuntimeProvider,
+  userId: string,
+) {
+  if (workspace.status !== "ready" && workspace.status !== "idle") {
+    return NextResponse.json(
+      { error: "Only an active workspace can be archived." },
+      { status: 409 },
+    );
+  }
+  const transitioned = await startTransition(workspace, ["ready", "idle"], "archiving");
+  if (!transitioned) return lifecycleConflict();
+
+  try {
+    const archivedAt = new Date().toISOString();
+    const { prefix, urls } = await mintSnapshotUpload(
+      supabaseSnapshotStorage(),
+      userId,
+      workspace.id,
+      archivedAt,
+    );
+    const uploads = urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
+
+    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    const manifest = await agent.archiveWorkspace(identity, { archivedAt, uploads });
+
+    await createWorkspaceSnapshot({
+      ownerId: userId,
+      workspaceId: workspace.id,
+      archivedAt,
+      storagePath: prefix,
+      manifest,
+    });
+  } catch (error) {
+    console.error(`Workspace ${workspace.id} archive failed`, error);
+    await restoreAfterFailure(workspace, "archiving", lifecycleError("archive")).catch(
+      (updateError: unknown) => console.error("Could not persist archive failure", updateError),
+    );
+    return NextResponse.json({ error: lifecycleError("archive") }, { status: 502 });
+  }
+
+  const completed = await completeTransition({
+    id: workspace.id,
+    from: "archiving",
+    patch: { status: "archived", errorMessage: null },
+  });
+  return completed
+    ? NextResponse.json({ workspace: { id: workspace.id, status: "archived" } })
+    : lifecycleReconciliationRequired("archive");
 }
 
 async function daytonaAgent(
