@@ -23,6 +23,46 @@
     { "error": { "code": "WORKSPACE_NOT_FOUND", "message": "no such workspace" } },
     { "error": { "code": "AGENT_UNREACHABLE", "message": "agent did not respond" } }
   ],
+  "SessionUrls": [
+    { "ptyUrl": "wss://8080-abc.daytonaproxy01.net/pty?token=eyJhbGciOi.eyJ3.sig" },
+    { "ptyUrl": "wss://x/pty?token=t", "eventsUrl": "https://x/events?token=t" }
+  ],
+  "WorkspaceSummary": [
+    {
+      "state": "running",
+      "startedAt": "2026-08-05T10:00:00Z",
+      "endedAt": null,
+      "duration": 120,
+      "lastActivity": "2026-08-05T10:02:00Z",
+      "tokenUsage": {
+        "input_tokens": 10,
+        "output_tokens": 579,
+        "cache_creation_input_tokens": 8849,
+        "cache_read_input_tokens": 152345
+      },
+      "changedFiles": 3,
+      "filesTouched": ["README.md", "src/index.ts", "test/foo.test.ts"],
+      "commitCount": 2,
+      "lastAssistantMessage": "I've added the function and a test."
+    },
+    {
+      "state": "exited",
+      "startedAt": "2026-08-05T09:00:00Z",
+      "endedAt": "2026-08-05T09:45:00Z",
+      "duration": 2700,
+      "lastActivity": "2026-08-05T09:45:00Z",
+      "tokenUsage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0
+      },
+      "changedFiles": 0,
+      "filesTouched": [],
+      "commitCount": 0,
+      "lastAssistantMessage": null
+    }
+  ],
   "ConversationMessage": [
     {
       "t": "message",

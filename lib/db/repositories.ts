@@ -157,6 +157,9 @@ export async function updateWorkspace(
     phase?: ProvisionPhase | null;
     sandboxId?: string | null;
     volumeName?: string | null;
+    computerId?: string | null;
+    tmuxSession?: string | null;
+    agentWorkspaceId?: string | null;
     worktreePath?: string | null;
     errorMessage?: string | null;
     touchActive?: boolean;
@@ -170,6 +173,11 @@ export async function updateWorkspace(
       ...(patch.phase !== undefined && { phase: patch.phase }),
       ...(patch.sandboxId !== undefined && { sandbox_id: patch.sandboxId }),
       ...(patch.volumeName !== undefined && { volume_name: patch.volumeName }),
+      ...(patch.computerId !== undefined && { computer_id: patch.computerId }),
+      ...(patch.tmuxSession !== undefined && { tmux_session: patch.tmuxSession }),
+      ...(patch.agentWorkspaceId !== undefined && {
+        agent_workspace_id: patch.agentWorkspaceId,
+      }),
       ...(patch.worktreePath !== undefined && {
         worktree_path: patch.worktreePath,
       }),
@@ -275,6 +283,33 @@ export async function createRuntimeComputer(input: {
 
   if (error) throw error;
   return toRuntimeComputer(data);
+}
+
+/**
+ * Atomically claim the per-project Runtime Computer slot. The SQL function
+ * takes a transaction-scoped advisory lock before reading/inserting, while the
+ * `unique (project_id)` constraint remains the durable backstop.
+ */
+export async function claimRuntimeComputer(input: {
+  projectId: string;
+  agentSecret: string;
+}): Promise<{ computer: RuntimeComputer; shouldProvision: boolean }> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("claim_runtime_computer", {
+    requested_project_id: input.projectId,
+    requested_agent_secret: input.agentSecret,
+  });
+
+  if (error) throw error;
+  const claim = data?.[0];
+  if (!claim || data.length !== 1) {
+    throw new Error("Runtime Computer claim returned an invalid result.");
+  }
+  const computer = await getRuntimeComputerByProject(input.projectId);
+  if (!computer || computer.id !== claim.runtime_computer_id) {
+    throw new Error("Runtime Computer claim was not persisted.");
+  }
+  return { computer, shouldProvision: claim.should_provision };
 }
 
 export async function updateRuntimeComputer(

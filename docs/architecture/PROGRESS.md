@@ -42,12 +42,16 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started
   - ✅ Kept the `jobs` table + `Job` type (decision 1A) as the seed for the M3 session record
   - 🟡 Deferred to M3: move git/session ops off the `RuntimeProvider` interface; interactive session routes
 
-## Milestone 3 — UI — ⬜ NOT STARTED
-- ⬜ Workspace page layout
-- ⬜ Live terminal (xterm.js over the signed-preview WS)
-- ⬜ Structured conversation view (from the JSONL event stream)
-- ⬜ Status + git diff panel
-- ⬜ Create / list workspaces wired to lazy provisioning
+## Milestone 3 — Workspace Session Experience — 🟡 IN PROGRESS
+Scope + contract: [`m3-handoff.md`](./m3-handoff.md), [`session-contract.md`](./session-contract.md).
+Phased execution (Option A — transport-first):
+- ✅ Phase 1 — PTY transport spike proven on a live Daytona box (writer election verified; wire + agent PTY path frozen — see [`spike-m3-report.md`](./spike-m3-report.md))
+- ✅ Phase 2 — Conversation `/events` SSE + seq resume + virtualized Timeline (event log frozen — see [`spike-m3-report.md`](./spike-m3-report.md))
+- ✅ Phase 3 — Workspace Summary endpoint (frozen `WorkspaceSummary` shape shared with M4 — [`spike-m3-report.md`](./spike-m3-report.md))
+- ⬜ Phase 4 — Lazy provisioning `ensureRuntimeComputer` (unique constraint + advisory lock)
+- ⬜ Phase 5 — Assemble the Workspace Experience (four projections around one Session) — **API freeze after this phase**
+- ⬜ Phase 6 — Acceptance test on real Daytona + `spike-m3-report.md`
+- ⬜ Phase 7 — Dogfood: an uninterrupted work session in Runtime without opening Conductor
 
 ## Milestone 4 — Archive / Replay / Resume — ⬜ NOT STARTED
 - ⬜ PTY cast capture + upload to object storage (Supabase Storage)

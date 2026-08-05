@@ -43,6 +43,10 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &WorkspaceActionRequest{})
 	case "ErrorResponse":
 		return json.Unmarshal(raw, &ErrorResponse{})
+	case "SessionUrls":
+		return json.Unmarshal(raw, &SessionUrls{})
+	case "WorkspaceSummary":
+		return json.Unmarshal(raw, &WorkspaceSummary{})
 	case "ConversationMessage":
 		return json.Unmarshal(raw, &ConversationMessage{})
 	case "TokenUsage":

@@ -55,6 +55,42 @@ type ErrorResponse struct {
 	} `json:"error"`
 }
 
+// SessionUrls is the browser's handle to one Workspace Session, returned by
+// POST /api/workspaces/[id]/session. Each URL already carries the 5-min token.
+type SessionUrls struct {
+	PtyUrl    string           `json:"ptyUrl"`
+	EventsUrl string           `json:"eventsUrl,omitempty"`
+	Summary   *WorkspaceSummary `json:"summary,omitempty"`
+}
+
+// WorkspaceSummary is the canonical, cross-milestone summary of a Workspace
+// Session — the shape Mission Engine and the M4 Snapshot manifest consume.
+// M3 owns this type; other packages import it. See docs/architecture/m4-plan.md
+// and docs/architecture/session-contract.md.
+type WorkspaceSummary struct {
+	State                string             `json:"state"`
+	StartedAt            string             `json:"startedAt"`
+	EndedAt              *string            `json:"endedAt"`
+	Duration             int64              `json:"duration"` // seconds
+	LastActivity         string             `json:"lastActivity"`
+	TokenUsage           TokenUsageAmounts  `json:"tokenUsage"`
+	ChangedFiles         int                `json:"changedFiles"`
+	FilesTouched         []string           `json:"filesTouched"`
+	CommitCount          int                `json:"commitCount"`
+	LastAssistantMessage *string            `json:"lastAssistantMessage"`
+}
+
+// TokenUsageAmounts is the numbers-only projection embedded in WorkspaceSummary.
+// It intentionally omits `service_tier` from the standalone `TokenUsage` event —
+// the Summary is interoperable with M4's placeholder validator and Mission's
+// shape (record of numbers); per-turn service_tier lives on the event.
+type TokenUsageAmounts struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
 // ContentBlock is one block inside a ConversationMessage.
 // type ∈ {text, thinking, tool_use, tool_result}.
 type ContentBlock struct {

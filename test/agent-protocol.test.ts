@@ -64,4 +64,13 @@ test("schemas reject malformed messages", () => {
     }).success,
     false,
   );
+  assert.equal(
+    PROTOCOL_SCHEMAS.SessionUrls.safeParse({ ptyUrl: "not-a-url" }).success,
+    false,
+  );
+  assert.equal(
+    PROTOCOL_SCHEMAS.SessionUrls.safeParse({}).success,
+    false,
+    "ptyUrl is required",
+  );
 });

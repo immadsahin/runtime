@@ -1,8 +1,10 @@
 # M3 Handoff — the Workspace Session experience
 
 Handoff for the agent picking up **Milestone 3**. Read this, then
-[`PROGRESS.md`](./PROGRESS.md), [`protocol.md`](./protocol.md), and
-[`runtime-agent.md`](./runtime-agent.md). All file references are on `main`.
+[`session-contract.md`](./session-contract.md) (the immutable Session contract
+and the M3 API Freeze rule), [`PROGRESS.md`](./PROGRESS.md),
+[`protocol.md`](./protocol.md), and [`runtime-agent.md`](./runtime-agent.md).
+All file references are on `main`.
 
 ## Where we are
 
@@ -214,6 +216,7 @@ isn't just adding UI; it defines the live runtime abstraction every higher-level
 feature builds on.
 
 ## Pointers
+- Session contract + API freeze: [`session-contract.md`](./session-contract.md)
 - Progress + full-loop DoD: [`PROGRESS.md`](./PROGRESS.md)
 - Protocol detail: [`protocol.md`](./protocol.md) · Agent detail: [`runtime-agent.md`](./runtime-agent.md)
 - What M2 proved live: [`spike-m2pt2-report.md`](./spike-m2pt2-report.md), [`spike4-runtime-report.md`](./spike4-runtime-report.md)

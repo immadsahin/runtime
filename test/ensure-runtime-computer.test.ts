@@ -1,0 +1,120 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  ensureRuntimeComputer,
+  type EnsureRuntimeComputerDependencies,
+  type RuntimeComputerProvisioner,
+} from "@/lib/runtime/ensure-runtime-computer";
+import type { RuntimeComputer } from "@/lib/runtime/types";
+
+function computer(overrides: Partial<RuntimeComputer> = {}): RuntimeComputer {
+  return {
+    id: "computer-1",
+    projectId: "project-1",
+    status: "provisioning",
+    imageVersion: "v1",
+    daytonaSandboxId: null,
+    agentBaseUrl: null,
+    provisionTimings: null,
+    errorMessage: null,
+    lastActiveAt: null,
+    createdAt: "2026-08-05T00:00:00Z",
+    updatedAt: "2026-08-05T00:00:00Z",
+    ...overrides,
+  };
+}
+
+/**
+ * A faithful in-memory stand-in for the claim RPC: its claim operation is
+ * atomic, while provision happens outside it. This exercises the actual
+ * orchestration boundary where concurrent first-workspace requests used to
+ * create duplicate Daytona boxes.
+ */
+function concurrencyHarness() {
+  let row: RuntimeComputer | null = null;
+  let secret: string | null = null;
+
+  const deps: EnsureRuntimeComputerDependencies = {
+    claim: async (input) => {
+      if (!row) {
+        row = computer();
+        secret = input.agentSecret;
+        return { computer: row, shouldProvision: true };
+      }
+      return { computer: row, shouldProvision: false };
+    },
+    getByProject: async () => row,
+    readSecret: async () => secret,
+    update: async (_id, patch) => {
+      assert.ok(row);
+      row = {
+        ...row,
+        ...(patch.status !== undefined && { status: patch.status }),
+        ...(patch.daytonaSandboxId !== undefined && {
+          daytonaSandboxId: patch.daytonaSandboxId,
+        }),
+        ...(patch.agentBaseUrl !== undefined && { agentBaseUrl: patch.agentBaseUrl }),
+        ...(patch.provisionTimings !== undefined && {
+          provisionTimings: patch.provisionTimings,
+        }),
+        ...(patch.errorMessage !== undefined && { errorMessage: patch.errorMessage }),
+      };
+    },
+    sleep: async () => new Promise((resolve) => setTimeout(resolve, 1)),
+    now: Date.now,
+  };
+
+  return { deps, row: () => row };
+}
+
+const input = {
+  projectId: "project-1",
+  repoFullName: "acme/runtime",
+};
+
+test("concurrent first-workspace ensures provision exactly one Runtime Computer", async () => {
+  const harness = concurrencyHarness();
+  let provisions = 0;
+  const provider: RuntimeComputerProvisioner = {
+    provisionComputer: async () => {
+      provisions += 1;
+      // Keep the owner request in the external-provision phase long enough
+      // for its peer to observe the durable provisioning row and wait.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return {
+        sandboxId: "daytona-1",
+        agentBaseUrl: "https://agent.example.test",
+        daytonaPreviewToken: "preview-token",
+        signedWsBaseUrl: "https://signed.example.test",
+        timings: { stages: [{ stage: "sandbox_create", ms: 10 }], totalMs: 10 },
+      };
+    },
+  };
+
+  const [first, second] = await Promise.all([
+    ensureRuntimeComputer(provider, input, harness.deps),
+    ensureRuntimeComputer(provider, input, harness.deps),
+  ]);
+
+  assert.equal(provisions, 1);
+  assert.equal(first.computer.id, second.computer.id);
+  assert.equal([first.provisioned, second.provisioned].filter(Boolean).length, 1);
+  assert.equal(harness.row()?.status, "ready");
+});
+
+test("a provision failure is persisted as an error for a later retry", async () => {
+  const harness = concurrencyHarness();
+  await assert.rejects(
+    () =>
+      ensureRuntimeComputer(
+        { provisionComputer: async () => Promise.reject(new Error("Daytona unavailable")) },
+        input,
+        harness.deps,
+      ),
+    /Daytona unavailable/,
+  );
+
+  assert.equal(harness.row()?.status, "error");
+  assert.match(harness.row()?.errorMessage ?? "", /provisioning failed/i);
+});
