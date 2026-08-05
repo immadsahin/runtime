@@ -1,4 +1,5 @@
 import { providerName } from "@/lib/env";
+import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { LocalRuntimeProvider } from "@/lib/runtime/local-provider";
 import { ModalRuntimeProvider } from "@/lib/runtime/modal-provider";
 import type { RuntimeProvider } from "@/lib/runtime/types";
@@ -10,17 +11,23 @@ let cached: RuntimeProvider | null = null;
  *
  * `local` runs everything in a directory on this machine and exists so the
  * whole product (API surface, UI, lifecycle) can be developed and tested
- * without Modal. `modal` is the real backend.
+ * without a cloud backend. `daytona` is the real backend (one always-on
+ * Runtime Computer per project); `modal` is the legacy workspace-per-sandbox
+ * backend retained until the Daytona path is fully wired.
  */
 export function getRuntimeProvider(): RuntimeProvider {
   if (cached) return cached;
 
-  if (providerName() === "modal") {
-    cached = new ModalRuntimeProvider();
-    return cached;
+  switch (providerName()) {
+    case "daytona":
+      cached = new DaytonaRuntimeProvider();
+      break;
+    case "modal":
+      cached = new ModalRuntimeProvider();
+      break;
+    default:
+      cached = new LocalRuntimeProvider();
   }
-
-  cached = new LocalRuntimeProvider();
   return cached;
 }
 
