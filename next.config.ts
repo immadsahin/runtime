@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // The Daytona SDK loads `form-data` lazily for file uploads. Turbopack
+  // cannot transform that dynamic Node require, so leave both packages for
+  // the Node runtime rather than bundling them into route handlers.
+  serverExternalPackages: ["@daytonaio/sdk", "form-data"],
+
   /**
    * Dev-only: allow the sandbox preview tunnel host to request /_next dev
    * resources. Without this, Next.js blocks the cross-origin request and HMR
