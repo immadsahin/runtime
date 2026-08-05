@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import {
-  getWorkspace,
-  hasActiveJob,
-  transitionWorkspace,
-} from "@/lib/db/repositories";
+import { getWorkspace, transitionWorkspace } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
@@ -159,7 +155,6 @@ async function suspendWorkspace(workspace: Workspace, provider: RuntimeProvider)
       { status: 409 },
     );
   }
-  if (await hasActiveJob(workspace.id)) return activeJobConflict("suspended");
   const transitioned = await startTransition(workspace, ["ready", "idle"], "suspending");
   if (!transitioned) return lifecycleConflict();
 
@@ -199,7 +194,6 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
       { status: 409 },
     );
   }
-  if (await hasActiveJob(workspace.id)) return activeJobConflict("destroyed");
   const transitioned = await startTransition(workspace, destroyable, "destroying");
   if (!transitioned) return lifecycleConflict();
 
@@ -241,13 +235,6 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
 function lifecycleConflict() {
   return NextResponse.json(
     { error: "This workspace changed in another session. Refresh and try again." },
-    { status: 409 },
-  );
-}
-
-function activeJobConflict(nextState: "suspended" | "destroyed") {
-  return NextResponse.json(
-    { error: `Finish or cancel the active Claude job before this workspace can be ${nextState}.` },
     { status: 409 },
   );
 }

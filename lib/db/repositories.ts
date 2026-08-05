@@ -230,21 +230,6 @@ export async function transitionWorkspace(input: {
   return data ? toWorkspace(data) : null;
 }
 
-/** Whether compute must remain available for a queued or running job. */
-export async function hasActiveJob(workspaceId: string): Promise<boolean> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("id")
-    .eq("workspace_id", workspaceId)
-    .in("status", ["queued", "running"])
-    .limit(1)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data !== null;
-}
-
 // --- runtime computers -----------------------------------------------------
 
 /** The one Runtime Computer for a project, if it has been provisioned. */
