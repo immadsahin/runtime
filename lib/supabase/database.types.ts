@@ -268,7 +268,19 @@ export type Database = {
       };
     };
     Views: Record<never, never>;
-    Functions: Record<never, never>;
+    Functions: {
+      claim_runtime_computer: {
+        Args: {
+          requested_project_id: string;
+          requested_agent_secret: string;
+          requested_image_version?: string;
+        };
+        Returns: Array<{
+          runtime_computer_id: string;
+          should_provision: boolean;
+        }>;
+      };
+    };
     Enums: {
       workspace_status: WorkspaceStatusDb;
       provision_phase: ProvisionPhaseDb;
