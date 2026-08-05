@@ -1,18 +1,20 @@
 "use client";
 
-import { LoaderCircle, Pause, Play, Trash2 } from "lucide-react";
+import { Archive, History, LoaderCircle, Pause, Play, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import type { WorkspaceStatus } from "@/lib/runtime/types";
 
-type LifecycleAction = "resume" | "suspend" | "destroy";
+type LifecycleAction = "resume" | "suspend" | "destroy" | "archive";
 
 const actionLabels: Record<LifecycleAction, string> = {
   resume: "Resume workspace",
   suspend: "Suspend workspace",
   destroy: "Destroy workspace",
+  archive: "Archive workspace",
 };
 
 export function WorkspaceLifecycleControls({
@@ -28,7 +30,9 @@ export function WorkspaceLifecycleControls({
   const [isPending, startTransition] = useTransition();
   const canSuspend = status === "ready" || status === "idle";
   const canResume = status === "suspended";
-  const canDestroy = canSuspend || canResume || status === "failed";
+  const canArchive = status === "ready" || status === "idle";
+  const isArchived = status === "archived";
+  const canDestroy = canSuspend || canResume || isArchived || status === "failed";
 
   function perform(action: LifecycleAction) {
     if (
@@ -62,7 +66,7 @@ export function WorkspaceLifecycleControls({
     });
   }
 
-  if (!canSuspend && !canResume && !canDestroy) {
+  if (!canSuspend && !canResume && !canArchive && !canDestroy && !isArchived) {
     return (
       <p className="text-muted-foreground text-xs">
         Lifecycle controls are unavailable while this workspace is {status.replaceAll("_", " ")}.
@@ -87,6 +91,19 @@ export function WorkspaceLifecycleControls({
             {waiting("suspend") ? "Suspending" : "Suspend"}
           </Button>
         )}
+        {canArchive && (
+          <Button disabled={isPending} onClick={() => perform("archive")} size="sm" variant="outline">
+            {waiting("archive") ? <LoaderCircle className="animate-spin" /> : <Archive />}
+            {waiting("archive") ? "Archiving" : "Archive"}
+          </Button>
+        )}
+        {isArchived && (
+          <Button asChild size="sm" variant="outline">
+            <Link href={`/workspaces/${workspaceId}/replay`}>
+              <History /> Replay
+            </Link>
+          </Button>
+        )}
         {canDestroy && (
           <Button disabled={isPending} onClick={() => perform("destroy")} size="sm" variant="destructive">
             {waiting("destroy") ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
@@ -100,9 +117,11 @@ export function WorkspaceLifecycleControls({
         </p>
       )}
       <p className="text-muted-foreground text-xs">
-        {canResume
-          ? "Resuming starts fresh compute attached to this workspace’s persistent storage."
-          : "Suspending stops compute but keeps the repository and worktree in persistent storage."}
+        {isArchived
+          ? "This workspace is archived. Replay reads its Snapshot from storage — no Runtime Computer required."
+          : canResume
+            ? "Resuming starts fresh compute attached to this workspace’s persistent storage."
+            : "Archiving captures a durable Snapshot (terminal, conversation, and git tree); suspending just stops compute."}
       </p>
     </div>
   );

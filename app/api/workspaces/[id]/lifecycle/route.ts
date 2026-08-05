@@ -293,7 +293,7 @@ async function destroyDaytonaWorkspace(
   provider: DaytonaRuntimeProvider,
   userId: string,
 ) {
-  const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "failed"];
+  const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "archived", "failed"];
   if (!destroyable.includes(workspace.status)) {
     return NextResponse.json(
       { error: "This workspace cannot be destroyed while another lifecycle action is running." },
@@ -421,7 +421,7 @@ async function suspendWorkspace(workspace: Workspace, provider: RuntimeProvider)
 }
 
 async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider) {
-  const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "failed"];
+  const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "archived", "failed"];
   if (!destroyable.includes(workspace.status)) {
     return NextResponse.json(
       { error: "This workspace cannot be destroyed while another lifecycle action is running." },
