@@ -1,0 +1,66 @@
+{
+  "valid": [
+    {
+      "version": 1,
+      "workspaceId": "ws-abc123",
+      "runtimeVersion": "runtime-computer-v1",
+      "claudeVersion": "claude-code-1.2.3",
+      "sessionId": "sess-7f3c",
+      "conversation": "conversation.jsonl",
+      "cast": "session.cast",
+      "tree": {
+        "kind": "git-bundle+patch",
+        "bundle": "worktree.bundle",
+        "patch": "uncommitted.patch"
+      },
+      "summary": "summary.json",
+      "checksums": {
+        "conversation.jsonl": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "session.cast": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "worktree.bundle": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "uncommitted.patch": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "summary.json": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "sizes": {
+        "conversation.jsonl": 40213,
+        "session.cast": 128044,
+        "worktree.bundle": 918273,
+        "uncommitted.patch": 2048,
+        "summary.json": 412
+      },
+      "startedAt": "2026-08-05T10:00:00.000Z",
+      "archivedAt": "2026-08-05T12:30:00.000Z",
+      "lastCommit": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+      "lastMessage": "Refactored the storage helpers and added tests.",
+      "tokenUsage": {
+        "input_tokens": 120400,
+        "output_tokens": 8300,
+        "cache_read_input_tokens": 90000
+      },
+      "changedFiles": 14
+    },
+    {
+      "version": 1,
+      "workspaceId": "ws-empty",
+      "runtimeVersion": "runtime-computer-v1",
+      "claudeVersion": "claude-code-1.2.3",
+      "sessionId": null,
+      "conversation": "conversation.jsonl",
+      "cast": "session.cast",
+      "tree": {
+        "kind": "git-bundle+patch",
+        "bundle": "worktree.bundle",
+        "patch": "uncommitted.patch"
+      },
+      "summary": "summary.json",
+      "checksums": {},
+      "sizes": {},
+      "startedAt": "2026-08-05T10:00:00.000Z",
+      "archivedAt": "2026-08-05T10:05:00.000Z",
+      "lastCommit": null,
+      "lastMessage": null,
+      "tokenUsage": {},
+      "changedFiles": 0
+    }
+  ]
+}

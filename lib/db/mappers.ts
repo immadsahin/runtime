@@ -1,3 +1,5 @@
+import { parseManifest } from "@/lib/runtime/snapshot/manifest";
+import type { WorkspaceSnapshot } from "@/lib/runtime/snapshot/types";
 import type { Database } from "@/lib/supabase/database.types";
 import type {
   Job,
@@ -137,5 +139,26 @@ export function toWorkspacePullRequest(
     baseBranch: row.base_branch,
     headBranch: row.head_branch,
     createdAt: row.created_at,
+  };
+}
+
+/**
+ * DB row -> domain object. The `manifest` jsonb is a derived cache of the
+ * canonical manifest.json; parse it through the schema at this boundary so a
+ * malformed cached copy fails loudly here rather than downstream.
+ */
+export function toWorkspaceSnapshot(
+  row: Tables["workspace_snapshots"]["Row"],
+): WorkspaceSnapshot {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    archivedAt: row.archived_at,
+    storagePath: row.storage_path,
+    manifest: parseManifest(row.manifest),
+    policy: row.policy,
+    retentionDays: row.retention_days,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
