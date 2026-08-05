@@ -1,0 +1,50 @@
+{
+  "comment": "Shared Go/TS parity fixture for the conversation JSONL parser. `lines` are raw Claude session records; `events` is the exact AgentEvent output both runtime-agent/internal/conversation (Go decode) and lib/runtime/replay (TS parseConversation) must produce. Keep them in lockstep.",
+  "lines": [
+    "{\"type\":\"assistant\",\"uuid\":\"u1\",\"parentUuid\":null,\"timestamp\":\"t1\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}",
+    "{\"type\":\"user\",\"uuid\":\"u2\",\"parentUuid\":\"u1\",\"timestamp\":\"t2\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolUseId\":\"tr1\",\"content\":\"done\"}]}}",
+    "{\"type\":\"assistant\",\"uuid\":\"u3\",\"parentUuid\":\"u2\",\"timestamp\":\"t3\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\"},{\"type\":\"tool_use\",\"id\":\"tu1\",\"name\":\"Bash\",\"input\":{\"cmd\":\"ls\"}}]}}",
+    "{\"type\":\"queue-operation\",\"uuid\":\"x\",\"message\":{\"role\":\"user\",\"content\":[]}}",
+    "not valid json",
+    "{\"type\":\"assistant\",\"uuid\":\"u4\",\"timestamp\":\"t4\",\"message\":null}",
+    "   ",
+    "{\"type\":\"assistant\",\"uuid\":\"u5\",\"parentUuid\":\"u3\",\"timestamp\":\"t5\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"bye\"}]}}"
+  ],
+  "events": [
+    {
+      "t": "message",
+      "uuid": "u1",
+      "parentUuid": null,
+      "role": "assistant",
+      "timestamp": "t1",
+      "content": [{ "type": "text", "text": "hi" }]
+    },
+    {
+      "t": "message",
+      "uuid": "u2",
+      "parentUuid": "u1",
+      "role": "user",
+      "timestamp": "t2",
+      "content": [{ "type": "tool_result", "toolUseId": "tr1", "content": "done" }]
+    },
+    {
+      "t": "message",
+      "uuid": "u3",
+      "parentUuid": "u2",
+      "role": "assistant",
+      "timestamp": "t3",
+      "content": [
+        { "type": "thinking" },
+        { "type": "tool_use", "id": "tu1", "name": "Bash", "input": { "cmd": "ls" } }
+      ]
+    },
+    {
+      "t": "message",
+      "uuid": "u5",
+      "parentUuid": "u3",
+      "role": "assistant",
+      "timestamp": "t5",
+      "content": [{ "type": "text", "text": "bye" }]
+    }
+  ]
+}
