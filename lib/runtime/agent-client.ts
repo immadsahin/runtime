@@ -8,12 +8,17 @@
  */
 
 import {
+  ArchiveWorkspaceRequest,
   CreateWorkspaceRequest,
   ErrorResponse,
   type RuntimeTokenClaims,
   WorkspaceSummary,
 } from "@/lib/runtime/agent-protocol";
 import { mintRuntimeToken } from "@/lib/runtime/runtime-token";
+import {
+  parseManifest,
+  type SnapshotManifest,
+} from "@/lib/runtime/snapshot/manifest";
 
 /** Everything needed to reach one Runtime Computer's agent. */
 export type AgentTarget = {
@@ -64,8 +69,23 @@ export class AgentClient {
     return this.post(`/workspaces/${identity.workspaceId}/resume`, identity);
   }
 
-  archiveWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/archive`, identity);
+  /**
+   * Archive the workspace: the agent produces the Snapshot artifacts and uploads
+   * them through the supplied signed URLs (manifest last), returning the manifest
+   * it assembled. Validated against the manifest schema — the same contract the
+   * db row caches — so a malformed manifest fails here, not downstream.
+   */
+  async archiveWorkspace(
+    identity: WorkspaceIdentity,
+    req: ArchiveWorkspaceRequest,
+  ): Promise<SnapshotManifest> {
+    const body = ArchiveWorkspaceRequest.parse(req);
+    const raw = await this.post(
+      `/workspaces/${identity.workspaceId}/archive`,
+      identity,
+      body,
+    );
+    return parseManifest(raw);
   }
 
   destroyWorkspace(identity: WorkspaceIdentity): Promise<unknown> {

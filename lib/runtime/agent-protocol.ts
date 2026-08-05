@@ -70,6 +70,29 @@ export const WorkspaceActionRequest = z.object({
 });
 export type WorkspaceActionRequest = z.infer<typeof WorkspaceActionRequest>;
 
+/**
+ * One signed upload URL the control plane mints for a Snapshot artifact. The
+ * agent PUTs that artifact's bytes to the URL — it never holds bucket
+ * credentials (M4 open decision #1). `artifact` is a key of SNAPSHOT_ARTIFACTS.
+ */
+export const ArchiveUpload = z.object({
+  artifact: z.string().min(1),
+  url: z.string().url(),
+});
+export type ArchiveUpload = z.infer<typeof ArchiveUpload>;
+
+/**
+ * Archive-time inputs the agent needs to PRODUCE a Snapshot: the logical archive
+ * timestamp (echoed verbatim into the manifest so it matches the storage prefix
+ * Next derived from it) and one signed upload URL per artifact. The agent
+ * replies with the assembled `SnapshotManifest` (uploaded LAST).
+ */
+export const ArchiveWorkspaceRequest = z.object({
+  archivedAt: z.string().min(1),
+  uploads: z.array(ArchiveUpload).min(1),
+});
+export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequest>;
+
 export const ErrorCode = z.enum([
   "WORKSPACE_NOT_FOUND",
   "UNAUTHORIZED",

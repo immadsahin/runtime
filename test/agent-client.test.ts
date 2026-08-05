@@ -58,6 +58,65 @@ test("a non-2xx error envelope is surfaced as a typed error", async () => {
   );
 });
 
+test("archiveWorkspace posts the archive body and parses the manifest", async () => {
+  const manifest = {
+    version: 1,
+    workspaceId: "ws-1",
+    runtimeVersion: "dev",
+    claudeVersion: "claude-code-1.2.3",
+    sessionId: "sess-1",
+    conversation: "conversation.jsonl",
+    cast: "session.cast",
+    tree: { kind: "git-bundle+patch", bundle: "worktree.bundle", patch: "uncommitted.patch" },
+    summary: "summary.json",
+    checksums: {},
+    sizes: {},
+    startedAt: "2026-08-06T00:00:00Z",
+    archivedAt: "2026-08-06T00:05:00Z",
+    lastCommit: null,
+    lastMessage: null,
+    tokenUsage: {},
+    changedFiles: 0,
+  };
+
+  let seenUrl = "";
+  let seenBody: unknown = null;
+  const fakeFetch = (async (url: string, init: RequestInit) => {
+    seenUrl = url;
+    seenBody = JSON.parse(init.body as string);
+    return new Response(JSON.stringify(manifest), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const client = new AgentClient(target, fakeFetch);
+  const out = await client.archiveWorkspace(identity, {
+    archivedAt: "2026-08-06T00:05:00Z",
+    uploads: [{ artifact: "manifest", url: "https://storage.example/upload/manifest?token=t" }],
+  });
+
+  assert.equal(seenUrl, "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/archive");
+  assert.deepEqual(seenBody, {
+    archivedAt: "2026-08-06T00:05:00Z",
+    uploads: [{ artifact: "manifest", url: "https://storage.example/upload/manifest?token=t" }],
+  });
+  assert.equal(out.workspaceId, "ws-1");
+  assert.equal(out.tree.kind, "git-bundle+patch");
+});
+
+test("archiveWorkspace rejects a malformed manifest response", async () => {
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ version: 1, workspaceId: "ws-1" }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+
+  const client = new AgentClient(target, fakeFetch);
+  await assert.rejects(() =>
+    client.archiveWorkspace(identity, {
+      archivedAt: "2026-08-06T00:05:00Z",
+      uploads: [{ artifact: "manifest", url: "https://storage.example/x?token=t" }],
+    }),
+  );
+});
+
 test("ptyUrl builds a wss signed-preview URL carrying a Runtime token", () => {
   const client = new AgentClient(target);
   const url = new URL(client.ptyUrl(identity));
