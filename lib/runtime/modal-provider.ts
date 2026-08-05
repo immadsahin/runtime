@@ -2,12 +2,10 @@ import {
   ModalClient,
   NotFoundError,
   type Sandbox,
-  type Secret,
   type Volume,
 } from "modal";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
-import { agentCommand } from "@/lib/runtime/agent";
 import {
   addWorktree,
   cloneRepo,
@@ -26,14 +24,8 @@ import type {
   CreatePullRequestResult,
   CreateWorkspaceInput,
   CreateWorkspaceResult,
-  ExecuteJobInput,
-  ExecuteJobResult,
-  JobPaths,
-  JobResult,
-  LogChunk,
   PushWorkspaceBranchInput,
   RuntimeProvider,
-  StreamLogsInput,
 } from "@/lib/runtime/types";
 
 const WORKSPACE_ROOT = "/runtime";
@@ -194,83 +186,6 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     }
   }
 
-  async executeJob(input: ExecuteJobInput): Promise<ExecuteJobResult> {
-    const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
-    const { logPath, resultPath } = this.getJobPaths(input);
-    const secret = await this.secretFor(input.env);
-    await run(
-      sandbox,
-      [
-        "bash",
-        "-lc",
-        modalDetachedJobScript(
-          agentCommand(input.agent, input),
-          logPath,
-          resultPath,
-        ),
-      ],
-      { secrets: secret ? [secret] : undefined },
-    );
-    sandbox.detach();
-    return { logPath, resultPath, executionHandle: input.sandboxId };
-  }
-
-  getJobPaths(input: { workspaceId: string; jobId: string }): JobPaths {
-    void input.workspaceId;
-    return {
-      logPath: `${WORKSPACE_ROOT}/.runtime/logs/${input.jobId}.log`,
-      resultPath: `${WORKSPACE_ROOT}/.runtime/logs/${input.jobId}.result.json`,
-    };
-  }
-
-  async getJobResult(input: {
-    workspaceId: string;
-    sandboxId: string;
-    jobId: string;
-    resultPath: string;
-  }): Promise<JobResult | null> {
-    const expected = `${WORKSPACE_ROOT}/.runtime/logs/${input.jobId}.result.json`;
-    if (input.resultPath !== expected) throw new Error("Invalid job result path");
-    try {
-      const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
-      const output = await run(sandbox, ["cat", expected]);
-      const parsed = JSON.parse(output) as unknown;
-      return isJobResult(parsed) ? parsed : null;
-    } catch (error) {
-      if (error instanceof NotFoundError) return null;
-      return null;
-    }
-  }
-
-  async *streamLogs(input: StreamLogsInput): AsyncIterable<LogChunk> {
-    const expected = `${WORKSPACE_ROOT}/.runtime/logs/${input.jobId}.log`;
-    if (input.logPath !== expected) throw new Error("Invalid job log path");
-    let offset = input.fromOffset ?? 0;
-    while (!input.signal?.aborted) {
-      try {
-        const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
-        const output = await run(sandbox, [
-          "bash",
-          "-lc",
-          `wc -c < ${shellQuote(expected)}`,
-        ]);
-        const size = Number(output.trim());
-        if (Number.isFinite(size) && size > offset) {
-          const chunk = await run(sandbox, [
-            "bash",
-            "-lc",
-            `tail -c +${offset + 1} ${shellQuote(expected)} | head -c 65536`,
-          ]);
-          offset += Buffer.byteLength(chunk, "utf8");
-          yield { offset, text: chunk };
-        }
-      } catch (error) {
-        if (!(error instanceof NotFoundError)) throw error;
-      }
-      await sleep(500);
-    }
-  }
-
   async listChangedFiles(input: {
     workspaceId: string;
     sandboxId: string;
@@ -389,13 +304,6 @@ export class ModalRuntimeProvider implements RuntimeProvider {
     });
   }
 
-  private async secretFor(
-    env: Record<string, string>,
-  ): Promise<Secret | undefined> {
-    return Object.keys(env).length
-      ? this.client.secrets.fromObject(env)
-      : undefined;
-  }
 }
 
 function workspaceVolumeName(workspaceId: string): string {
@@ -418,7 +326,7 @@ function defaultInstallCommand(): string {
 async function run(
   sandbox: Sandbox,
   command: string[],
-  options?: { workdir?: string; env?: Record<string, string>; secrets?: Secret[] },
+  options?: { workdir?: string; env?: Record<string, string> },
 ): Promise<string> {
   const process = await sandbox.exec(command, options);
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -432,42 +340,4 @@ async function run(
     );
   }
   return stdout;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function modalDetachedJobScript(
-  command: string,
-  logPath: string,
-  resultPath: string,
-): string {
-  const log = shellQuote(logPath);
-  const result = shellQuote(resultPath);
-  const runner = [
-    "umask 077",
-    "set +e",
-    `${command} >> ${log} 2>&1`,
-    "exit_code=$?",
-    'if [ "$exit_code" -eq 0 ]; then result_status=succeeded; else result_status=failed; fi',
-    `printf '{"status":"%s","exitCode":%s,"finishedAt":"%s"}\\n' "$result_status" "$exit_code" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ${result}`,
-  ].join("; ");
-  return `mkdir -p ${shellQuote(`${WORKSPACE_ROOT}/.runtime/logs`)}; nohup bash -lc ${shellQuote(runner)} >/dev/null 2>&1 &`;
-}
-
-function isJobResult(value: unknown): value is JobResult {
-  if (!value || typeof value !== "object") return false;
-  const result = value as Record<string, unknown>;
-  return (
-    (result.status === "succeeded" ||
-      result.status === "failed" ||
-      result.status === "cancelled") &&
-    (typeof result.exitCode === "number" || result.exitCode === null) &&
-    typeof result.finishedAt === "string"
-  );
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

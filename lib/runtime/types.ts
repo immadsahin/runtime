@@ -148,20 +148,22 @@ export type JobStatus =
   | "failed"
   | "cancelled";
 
-/** Coding agent that owns one detached job invocation. */
 export type JobAgent = "claude" | "codex";
 
+/**
+ * Historical job record. The batch execution mechanism that produced these was
+ * retired in M2 pt3; the table + type are kept as the seed for the interactive
+ * session record (M3), so the log/result/handle fields are now vestigial.
+ */
 export type Job = {
   id: string;
   workspaceId: string;
   agent: JobAgent;
   status: JobStatus;
   prompt: string;
-  /** Log file path on durable storage, tailed by streamLogs. */
   logPath: string;
   /** Provider-owned completion record; never supplied by the browser. */
   resultPath: string;
-  /** Detached process identity, when the provider can supply one. */
   executionHandle: string | null;
   logBytes: number;
   exitCode: number | null;
@@ -213,52 +215,6 @@ export type CreateWorkspaceResult = {
   worktreePath: string;
   /** Non-fatal provisioning problems that should be shown before a job runs. */
   warnings: string[];
-};
-
-export type ExecuteJobInput = {
-  workspaceId: string;
-  sandboxId: string;
-  jobId: string;
-  agent: JobAgent;
-  prompt: string;
-  /** Narrow Claude credential set, injected only for this command. */
-  env: Record<string, string>;
-  /** Resume a previous Claude Code session instead of starting fresh. */
-  resumeSessionId?: string;
-};
-
-export type ExecuteJobResult = {
-  /** Logs are written here and tailed asynchronously; execution is detached. */
-  logPath: string;
-  /** Atomically written by the detached runner when it reaches a terminal state. */
-  resultPath: string;
-  executionHandle?: string;
-};
-
-export type JobPaths = Pick<ExecuteJobResult, "logPath" | "resultPath">;
-
-export type JobResult = {
-  status: Extract<JobStatus, "succeeded" | "failed" | "cancelled">;
-  exitCode: number | null;
-  sessionId?: string;
-  costUsd?: number;
-  finishedAt: string;
-};
-
-export type LogChunk = {
-  /** Byte offset AFTER this chunk, used to resume tailing across reconnects. */
-  offset: number;
-  text: string;
-};
-
-export type StreamLogsInput = {
-  workspaceId: string;
-  sandboxId: string;
-  jobId: string;
-  logPath: string;
-  /** Resume from this byte offset. */
-  fromOffset?: number;
-  signal?: AbortSignal;
 };
 
 export type CreatePullRequestInput = {
@@ -316,21 +272,6 @@ export interface RuntimeProvider {
    * resume onto fresh compute before starting a job or terminal.
    */
   sandboxAlive(sandboxId: string): Promise<boolean>;
-
-  executeJob(input: ExecuteJobInput): Promise<ExecuteJobResult>;
-
-  /** Deterministic, provider-owned paths persisted before detached execution. */
-  getJobPaths(input: { workspaceId: string; jobId: string }): JobPaths;
-
-  /** Read a provider-owned completion record for a detached job. */
-  getJobResult(input: {
-    workspaceId: string;
-    sandboxId: string;
-    jobId: string;
-    resultPath: string;
-  }): Promise<JobResult | null>;
-
-  streamLogs(input: StreamLogsInput): AsyncIterable<LogChunk>;
 
   /** Workspace changes compared with the worktree's current branch HEAD. */
   listChangedFiles(input: {

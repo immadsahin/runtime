@@ -1,40 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { ensureLiveSandbox, settleRunningJobs } from "@/lib/runtime/compute";
+import { ensureLiveSandbox } from "@/lib/runtime/compute";
 import type {
-  Job,
-  JobResult,
-  JobStatus,
   RuntimeProvider,
   Workspace,
   WorkspaceStatus,
 } from "@/lib/runtime/types";
-
-function makeJob(overrides: Partial<Job> = {}): Job {
-  return {
-    id: "job-1",
-    workspaceId: "ws-1",
-    agent: "claude",
-    status: "running",
-    prompt: "hi",
-    logPath: "/logs/job-1.log",
-    resultPath: "/logs/job-1.result.json",
-    executionHandle: null,
-    logBytes: 42,
-    exitCode: null,
-    sessionId: null,
-    costUsd: null,
-    startedAt: null,
-    finishedAt: null,
-    createdAt: "2026-01-01T00:00:00Z",
-    ...overrides,
-  };
-}
-
-function makeResult(overrides: Partial<JobResult> = {}): JobResult {
-  return { status: "succeeded", exitCode: 0, finishedAt: "2026-01-01T00:01:00Z", ...overrides };
-}
 
 function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
@@ -67,75 +39,6 @@ function fakeProvider(overrides: Partial<RuntimeProvider> = {}): RuntimeProvider
     ...overrides,
   } as unknown as RuntimeProvider;
 }
-
-// --- settleRunningJobs ------------------------------------------------------
-
-test("settleRunningJobs settles a finished running job once, from queued/running", async () => {
-  const transitions: { from: JobStatus[]; status: JobStatus; exitCode?: number | null; logBytes?: number }[] = [];
-  await settleRunningJobs(makeWorkspace({ sandboxId: "sb-1" }), {
-    listJobs: async () => [makeJob({ status: "running" })],
-    getJobResult: async () => makeResult({ status: "failed", exitCode: 1 }),
-    transitionJob: async (input) => {
-      transitions.push({ from: input.from, status: input.patch.status, exitCode: input.patch.exitCode, logBytes: input.patch.logBytes });
-      return makeJob({ status: "failed" });
-    },
-  });
-  assert.equal(transitions.length, 1);
-  assert.deepEqual(transitions[0].from, ["queued", "running"]);
-  assert.equal(transitions[0].status, "failed");
-  assert.equal(transitions[0].exitCode, 1);
-  assert.equal(transitions[0].logBytes, 42);
-});
-
-test("settleRunningJobs ignores jobs whose result record is absent", async () => {
-  let transitioned = 0;
-  await settleRunningJobs(makeWorkspace(), {
-    listJobs: async () => [makeJob({ status: "running" })],
-    getJobResult: async () => null,
-    transitionJob: async () => { transitioned += 1; return null; },
-  });
-  assert.equal(transitioned, 0);
-});
-
-test("settleRunningJobs skips jobs with no result path (never started)", async () => {
-  let reads = 0;
-  await settleRunningJobs(makeWorkspace(), {
-    listJobs: async () => [makeJob({ status: "queued", resultPath: "" })],
-    getJobResult: async () => { reads += 1; return makeResult(); },
-    transitionJob: async () => null,
-  });
-  assert.equal(reads, 0);
-});
-
-test("settleRunningJobs swallows provider read failures", async () => {
-  let transitioned = 0;
-  await settleRunningJobs(makeWorkspace(), {
-    listJobs: async () => [makeJob({ status: "running" })],
-    getJobResult: async () => { throw new Error("provider down"); },
-    transitionJob: async () => { transitioned += 1; return null; },
-  });
-  assert.equal(transitioned, 0);
-});
-
-test("settleRunningJobs does nothing when no jobs are active", async () => {
-  let reads = 0;
-  await settleRunningJobs(makeWorkspace(), {
-    listJobs: async () => [makeJob({ status: "succeeded" })],
-    getJobResult: async () => { reads += 1; return makeResult(); },
-    transitionJob: async () => null,
-  });
-  assert.equal(reads, 0);
-});
-
-test("settleRunningJobs passes an empty sandbox id when the workspace has none", async () => {
-  let seen = "unset";
-  await settleRunningJobs(makeWorkspace({ sandboxId: null }), {
-    listJobs: async () => [makeJob({ status: "queued" })],
-    getJobResult: async (input) => { seen = input.sandboxId; return null; },
-    transitionJob: async () => null,
-  });
-  assert.equal(seen, "");
-});
 
 // --- ensureLiveSandbox ------------------------------------------------------
 
