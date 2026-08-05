@@ -63,6 +63,25 @@ type WorkspaceActionRequest struct {
 	WorkspaceID string `json:"workspaceId"`
 }
 
+// ArchiveUpload is one signed upload URL the control plane mints for an artifact.
+// The agent PUTs that artifact's bytes to the URL; it never holds bucket
+// credentials (M4 open decision #1). `artifact` is a key of the shared
+// SNAPSHOT_ARTIFACTS table (conversation/cast/bundle/patch/summary/manifest).
+type ArchiveUpload struct {
+	Artifact string `json:"artifact"`
+	URL      string `json:"url"`
+}
+
+// ArchiveWorkspaceRequest carries the archive-time inputs the agent needs to
+// PRODUCE a Snapshot: the logical archive timestamp (recorded verbatim in the
+// manifest so it matches the storage prefix Next derived from it) and one signed
+// upload URL per artifact. The response is the manifest.json the agent assembled
+// and uploaded LAST — its presence in storage marks the Snapshot complete.
+type ArchiveWorkspaceRequest struct {
+	ArchivedAt string          `json:"archivedAt"`
+	Uploads    []ArchiveUpload `json:"uploads"`
+}
+
 // ErrorResponse is the stable error envelope for control-plane failures.
 type ErrorResponse struct {
 	Error struct {

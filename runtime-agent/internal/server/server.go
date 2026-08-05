@@ -134,8 +134,20 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
-	err := s.ws.Archive(r.Context(), r.PathValue("id"))
-	respond(w, "archived", err)
+	var req protocol.ArchiveWorkspaceRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.ArchivedAt == "" || len(req.Uploads) == 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "archive requires archivedAt and upload URLs")
+		return
+	}
+	manifest, err := s.ws.Archive(r.Context(), r.PathValue("id"), req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, manifest)
 }
 
 func (s *Server) destroyWorkspace(w http.ResponseWriter, r *http.Request) {

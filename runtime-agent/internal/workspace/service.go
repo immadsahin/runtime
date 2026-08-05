@@ -13,8 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/protocol"
+	"runtime-agent/internal/snapshot"
 	"runtime-agent/internal/tmux"
 )
 
@@ -34,6 +36,11 @@ type Service struct {
 
 	summariesMu sync.Mutex
 	summaries   map[string]*Summary
+
+	// recorders capture each session's terminal to an asciinema cast, started at
+	// session start (M4 invariant #3: recording is independent of any browser).
+	recordersMu sync.Mutex
+	recorders   map[string]*cast.Recorder
 }
 
 // workspaceFacts are the per-workspace details Create learns and Start/Resume
@@ -56,6 +63,7 @@ func NewService(root string) *Service {
 		secrets:   secrets,
 		facts:     map[string]workspaceFacts{},
 		summaries: map[string]*Summary{},
+		recorders: map[string]*cast.Recorder{},
 	}
 }
 
@@ -97,6 +105,15 @@ func (s *Service) worktreePath(id string) string {
 	return filepath.Join(s.Root, "workspaces", id)
 }
 
+// castDir holds a workspace's terminal cast, kept OUTSIDE the worktree so the
+// recording never pollutes the git tree (bundle/patch/changedFiles) it archives.
+func (s *Service) castDir(id string) string {
+	return filepath.Join(s.Root, "casts", id)
+}
+func (s *Service) castPath(id string) string {
+	return filepath.Join(s.castDir(id), cast.DefaultCastName)
+}
+
 // Create adds a git worktree for the workspace from the shared bare mirror.
 // The mirror itself (clone/fetch) is provisioned separately; this is the
 // per-workspace step. Claude is not started until Start.
@@ -135,6 +152,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 		return "", err
 	}
 	s.beginSummary(workspaceID, worktree)
+	s.startRecorder(ctx, workspaceID)
 	return name, nil
 }
 
@@ -150,6 +168,7 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 		return "", err
 	}
 	s.beginSummary(workspaceID, worktree)
+	s.startRecorder(ctx, workspaceID)
 	return name, nil
 }
 
@@ -193,6 +212,9 @@ func gitBranch(ctx context.Context, worktree string) string {
 // summary's endedAt. The Summary itself is retained so a post-stop
 // SummaryOf still returns the last-known state.
 func (s *Service) Stop(ctx context.Context, workspaceID string) error {
+	// Finalize the cast BEFORE killing tmux — the recorder taps the live pane, so
+	// the pane must still exist while it drains its tail and closes the file.
+	s.stopRecorder(ctx, workspaceID)
 	s.endSummary(workspaceID)
 	return s.tmux.KillSession(ctx, sessionName(workspaceID))
 }
@@ -200,11 +222,70 @@ func (s *Service) Stop(ctx context.Context, workspaceID string) error {
 // SessionName exposes the tmux session name the PTY handler attaches to.
 func (s *Service) SessionName(workspaceID string) string { return sessionName(workspaceID) }
 
-// Archive stops the session; uploading the PTY cast + JSONL to object storage
-// and removing the worktree is wired in Milestone 4.
-func (s *Service) Archive(ctx context.Context, workspaceID string) error {
-	// TODO(M4): finalize + upload cast + JSONL, then mark read-only.
-	return s.Stop(ctx, workspaceID)
+// Archive produces a Workspace Snapshot: it stops the session (finalizing the
+// cast and the Summary), captures the conversation, git tree, and Summary as
+// immutable artifacts, and uploads them — manifest LAST — through the signed
+// URLs the control plane minted. It returns the manifest so Next can cache it.
+//
+// The worktree is intentionally LEFT IN PLACE: reclaiming it is coupled with
+// Restore (a later slice), so archived work stays recoverable until Restore can
+// revive it. Archive is idempotent — re-archiving a stopped session simply
+// re-captures and re-uploads.
+func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.ArchiveWorkspaceRequest) (*snapshot.Manifest, error) {
+	if err := s.Stop(ctx, workspaceID); err != nil {
+		return nil, err
+	}
+
+	summary := s.SummaryOf(ctx, workspaceID)
+	summary.State = "archived" // the Snapshot captures the archived session
+
+	return snapshot.Produce(ctx, snapshot.Input{
+		WorkspaceID:      workspaceID,
+		Worktree:         s.worktreePath(workspaceID),
+		CastPath:         s.castPath(workspaceID),
+		ConversationPath: s.SessionLog(workspaceID),
+		SessionID:        s.sessionID(workspaceID),
+		Summary:          summary,
+		ArchivedAt:       req.ArchivedAt,
+		Uploads:          req.Uploads,
+		ClaudeVersion:    snapshot.ClaudeVersion(ctx),
+	})
+}
+
+// sessionID returns the Claude session id for `claude --continue` on Restore —
+// the JSONL basename without extension — or nil when Claude never wrote a log.
+func (s *Service) sessionID(workspaceID string) *string {
+	log := s.SessionLog(workspaceID)
+	if log == "" {
+		return nil
+	}
+	id := strings.TrimSuffix(filepath.Base(log), filepath.Ext(log))
+	if id == "" {
+		return nil
+	}
+	return &id
+}
+
+// startRecorder begins capturing the workspace's tmux pane to its cast file.
+// Best-effort: recording must never block a session start, so a failure is
+// swallowed (the archive later stages an empty cast if none was produced).
+func (s *Service) startRecorder(ctx context.Context, workspaceID string) {
+	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{})
+	s.recordersMu.Lock()
+	s.recorders[workspaceID] = rec
+	s.recordersMu.Unlock()
+	_ = rec.Start(ctx)
+}
+
+// stopRecorder finalizes and drops the workspace's recorder. Idempotent.
+func (s *Service) stopRecorder(ctx context.Context, workspaceID string) {
+	s.recordersMu.Lock()
+	rec := s.recorders[workspaceID]
+	delete(s.recorders, workspaceID)
+	s.recordersMu.Unlock()
+	if rec != nil {
+		_ = rec.Stop(ctx)
+	}
 }
 
 // Destroy stops the Claude session and removes its worktree from the shared
@@ -243,6 +324,9 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.summariesMu.Lock()
 	delete(s.summaries, workspaceID)
 	s.summariesMu.Unlock()
+	s.recordersMu.Lock()
+	delete(s.recorders, workspaceID)
+	s.recordersMu.Unlock()
 }
 
 // SessionLog returns the current Claude JSONL path for a workspace, or "" if
