@@ -221,13 +221,13 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 		if output == "" {
 			return nil
 		}
-		return writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: seq})
+		return writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(seq)})
 	})
 	go coalescer.Run()
 	defer func() {
 		coalescer.Stop()
 		if output := redactor.Flush(); output != "" {
-			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output})
+			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(coalescer.NextSeq())})
 		}
 	}()
 
