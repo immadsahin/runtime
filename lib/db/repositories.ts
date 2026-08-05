@@ -1,11 +1,21 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { toJob, toProject, toWorkspace, toWorkspacePullRequest } from "@/lib/db/mappers";
+import {
+  toJob,
+  toProject,
+  toRuntimeComputer,
+  toWorkspace,
+  toWorkspacePullRequest,
+} from "@/lib/db/mappers";
 import type {
   Job,
   JobAgent,
   JobStatus,
   Project,
+  ProviderName,
   ProvisionPhase,
+  ProvisionTimings,
+  RuntimeComputer,
+  RuntimeComputerStatus,
   Workspace,
   WorkspacePullRequest,
   WorkspaceStatus,
@@ -120,7 +130,7 @@ export async function createWorkspaceRow(input: {
   projectId: string;
   branch: string;
   baseBranch: string;
-  provider: "local" | "modal";
+  provider: ProviderName;
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -233,6 +243,107 @@ export async function hasActiveJob(workspaceId: string): Promise<boolean> {
 
   if (error) throw error;
   return data !== null;
+}
+
+// --- runtime computers -----------------------------------------------------
+
+/** The one Runtime Computer for a project, if it has been provisioned. */
+export async function getRuntimeComputerByProject(
+  projectId: string,
+): Promise<RuntimeComputer | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("runtime_computers")
+    .select("*")
+    .eq("project_id", projectId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? toRuntimeComputer(data) : null;
+}
+
+/**
+ * Claim the single Runtime Computer slot for a project. The
+ * `unique (project_id)` constraint makes this the concurrency gate for lazy
+ * provisioning: two "New Workspace" clicks race here and exactly one insert
+ * wins. The loser gets a unique-violation, catches it, and reads the existing
+ * row via {@link getRuntimeComputerByProject}.
+ */
+export async function createRuntimeComputer(input: {
+  ownerId: string;
+  projectId: string;
+  agentSecret: string;
+  imageVersion?: string;
+}): Promise<RuntimeComputer> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("runtime_computers")
+    .insert({
+      owner_id: input.ownerId,
+      project_id: input.projectId,
+      agent_secret: input.agentSecret,
+      status: "provisioning",
+      ...(input.imageVersion && { image_version: input.imageVersion }),
+    })
+    .select("*")
+    .single();
+
+  if (error) throw error;
+  return toRuntimeComputer(data);
+}
+
+export async function updateRuntimeComputer(
+  id: string,
+  patch: {
+    status?: RuntimeComputerStatus;
+    daytonaSandboxId?: string | null;
+    agentBaseUrl?: string | null;
+    provisionTimings?: ProvisionTimings | null;
+    errorMessage?: string | null;
+    touchActive?: boolean;
+  },
+): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("runtime_computers")
+    .update({
+      ...(patch.status !== undefined && { status: patch.status }),
+      ...(patch.daytonaSandboxId !== undefined && {
+        daytona_sandbox_id: patch.daytonaSandboxId,
+      }),
+      ...(patch.agentBaseUrl !== undefined && {
+        agent_base_url: patch.agentBaseUrl,
+      }),
+      ...(patch.provisionTimings !== undefined && {
+        provision_timings: patch.provisionTimings,
+      }),
+      ...(patch.errorMessage !== undefined && {
+        error_message: patch.errorMessage,
+      }),
+      ...(patch.touchActive && { last_active_at: new Date().toISOString() }),
+    })
+    .eq("id", id);
+
+  if (error) throw error;
+}
+
+/**
+ * Read the server-only per-computer secret used to mint Runtime tokens. Kept
+ * out of the domain object (see {@link toRuntimeComputer}) so it never rides
+ * along into a browser-facing payload; callers ask for it explicitly.
+ */
+export async function readRuntimeComputerSecret(
+  id: string,
+): Promise<string | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("runtime_computers")
+    .select("agent_secret")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data?.agent_secret ?? null;
 }
 
 // --- jobs ------------------------------------------------------------------

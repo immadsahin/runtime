@@ -57,11 +57,18 @@ export type ProvisionPhase =
   | "health_check"
   | "claude_ready";
 
+/**
+ * Backend that owns a workspace's compute. `local`/`modal` are the workspace-per-
+ * sandbox model; `daytona` is Runtime's real model (Project → Runtime Computer →
+ * Workspace) where many workspaces share one always-on box.
+ */
+export type ProviderName = "local" | "modal" | "daytona";
+
 export type Workspace = {
   id: string;
   projectId: string;
   /** Backend that owns this workspace's compute and durable storage. */
-  provider: "local" | "modal";
+  provider: ProviderName;
   status: WorkspaceStatus;
   phase: ProvisionPhase | null;
   /** Branch checked out in the git worktree. */
@@ -96,6 +103,26 @@ export type RuntimeComputerStatus =
   | "error"
   | "stopped";
 
+/**
+ * Ordered stages of Runtime Computer provisioning. Measured on every provision
+ * and persisted (see {@link ProvisionTimings}) so that "workspace creation feels
+ * slow" can be traced to the exact stage that regressed instead of guessed at.
+ */
+export type ProvisionStage =
+  | "sandbox_create"
+  | "agent_upload"
+  | "agent_boot"
+  | "health_check"
+  | "mirror_clone";
+
+export type StageTiming = { stage: ProvisionStage; ms: number };
+
+/** Per-provision timing record, stored on the Runtime Computer row. */
+export type ProvisionTimings = {
+  stages: StageTiming[];
+  totalMs: number;
+};
+
 export type RuntimeComputer = {
   id: string;
   projectId: string;
@@ -106,6 +133,8 @@ export type RuntimeComputer = {
   daytonaSandboxId: string | null;
   /** Base of the Daytona preview URL the runtime-agent is reachable at. */
   agentBaseUrl: string | null;
+  /** Wall-clock breakdown of the last provision; null until first measured. */
+  provisionTimings: ProvisionTimings | null;
   errorMessage: string | null;
   lastActiveAt: string | null;
   createdAt: string;
@@ -269,7 +298,7 @@ export type PushWorkspaceBranchInput = {
  * between `local` and `modal` must not require any API or UI change.
  */
 export interface RuntimeProvider {
-  readonly name: "local" | "modal";
+  readonly name: ProviderName;
 
   createWorkspace(input: CreateWorkspaceInput): Promise<CreateWorkspaceResult>;
 
