@@ -42,6 +42,18 @@ function concurrencyHarness() {
         secret = input.agentSecret;
         return { computer: row, shouldProvision: true };
       }
+      if (row.status === "error" || row.status === "stopped") {
+        row = {
+          ...row,
+          status: "provisioning",
+          daytonaSandboxId: null,
+          agentBaseUrl: null,
+          provisionTimings: null,
+          errorMessage: null,
+        };
+        secret = input.agentSecret;
+        return { computer: row, shouldProvision: true };
+      }
       return { computer: row, shouldProvision: false };
     },
     getByProject: async () => row,
@@ -117,4 +129,31 @@ test("a provision failure is persisted as an error for a later retry", async () 
 
   assert.equal(harness.row()?.status, "error");
   assert.match(harness.row()?.errorMessage ?? "", /provisioning failed/i);
+});
+
+test("a failed Runtime Computer can be claimed and provisioned by a retry", async () => {
+  const harness = concurrencyHarness();
+  let provisions = 0;
+  const provider: RuntimeComputerProvisioner = {
+    provisionComputer: async () => {
+      provisions += 1;
+      if (provisions === 1) throw new Error("Daytona unavailable");
+      return {
+        sandboxId: "daytona-retry",
+        agentBaseUrl: "https://agent.example.test",
+        daytonaPreviewToken: "preview-token",
+        signedWsBaseUrl: "https://signed.example.test",
+        timings: { stages: [{ stage: "sandbox_create", ms: 10 }], totalMs: 10 },
+      };
+    },
+  };
+
+  await assert.rejects(() => ensureRuntimeComputer(provider, input, harness.deps));
+
+  const retried = await ensureRuntimeComputer(provider, input, harness.deps);
+
+  assert.equal(provisions, 2);
+  assert.equal(retried.provisioned, true);
+  assert.equal(harness.row()?.status, "ready");
+  assert.equal(harness.row()?.daytonaSandboxId, "daytona-retry");
 });
