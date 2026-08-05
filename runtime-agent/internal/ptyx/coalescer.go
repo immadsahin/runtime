@@ -66,6 +66,17 @@ func (c *Coalescer) Write(b []byte) error {
 	return nil
 }
 
+// NextSeq reserves and returns the next per-socket sequence number. The server
+// uses it for the final redactor-flush frame emitted after Stop, so that frame
+// stays monotonic with the coalesced output stream rather than reusing seq 0.
+func (c *Coalescer) NextSeq() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	seq := c.seq
+	c.seq++
+	return seq
+}
+
 // Stop tells Run to exit after one last flush.
 func (c *Coalescer) Stop() {
 	select {
