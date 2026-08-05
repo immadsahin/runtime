@@ -21,7 +21,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started
 - ✅ pt3 · Frozen `agent-protocol.ts` (zod) + golden fixtures (TS + Go drift guard)
 - ✅ pt4 · `runtime-agent/` Go skeleton (auth/tmux/claude/conversation/ptyx/workspace/server)
 
-## Milestone 2 — Replace the execution path — 🟡 IN PROGRESS (~⅔)
+## Milestone 2 — Replace the execution path — ✅ COMPLETE
 - ✅ pt1 · Runtime tokens + typed `AgentClient` (cross-language auth verified)
 - ✅ pt2 · `DaytonaRuntimeProvider` + provisioning + agent deploy — verified on a
   real box (report: [`spike-m2pt2-report.md`](./spike-m2pt2-report.md))
@@ -34,8 +34,13 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started
   - ✅ Provisioning instrumentation (`ProvisionTimer` → `runtime_computers.provision_timings`)
   - ✅ `runtime_computers` repository (first-class CRUD)
   - 🟡 Deferred to pt3/M3: DB-orchestrated lazy `ensureRuntimeComputer` (needs auth session)
-- ⬜ pt3 · Retire the SSE batch path (delete `executeJob`/`streamLogs`/SSE route; rewire reconciliation);
-  move git/session ops off the `RuntimeProvider` interface
+- ✅ pt3 · Retired the SSE batch execution path
+  - ✅ Deleted the job routes (`/api/workspaces/[id]/jobs` + SSE logs) and the `-p` agent runner (`agent.ts`)
+  - ✅ Removed `executeJob`/`streamLogs`/`getJobResult`/`getJobPaths` from the interface + all providers
+  - ✅ Deleted `settleRunningJobs`/`reconcileWorkspaceJobs` (batch reconciliation); kept `ensureLiveSandbox` for M3
+  - ✅ Trimmed the job-driven UI (studio composer/JobMessage/terminal + `workspace-job-panel`); studio shell kept
+  - ✅ Kept the `jobs` table + `Job` type (decision 1A) as the seed for the M3 session record
+  - 🟡 Deferred to M3: move git/session ops off the `RuntimeProvider` interface; interactive session routes
 
 ## Milestone 3 — UI — ⬜ NOT STARTED
 - ⬜ Workspace page layout
