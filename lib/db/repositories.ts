@@ -580,6 +580,34 @@ export async function createWorkspacePullRequest(input: {
  * must be the same values Next used to mint the upload URLs, so the row and the
  * stored objects agree.
  */
+/** A workspace's Snapshots, newest first (the Replay picker's list). */
+export async function listWorkspaceSnapshots(
+  workspaceId: string,
+): Promise<WorkspaceSnapshot[]> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workspace_snapshots")
+    .select("*")
+    .eq("workspace_id", workspaceId)
+    .order("archived_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map(toWorkspaceSnapshot);
+}
+
+/** One Snapshot by id, or null. RLS confines the read to the owner. */
+export async function getWorkspaceSnapshot(
+  id: string,
+): Promise<WorkspaceSnapshot | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workspace_snapshots")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toWorkspaceSnapshot(data) : null;
+}
+
 export async function createWorkspaceSnapshot(input: {
   ownerId: string;
   workspaceId: string;
