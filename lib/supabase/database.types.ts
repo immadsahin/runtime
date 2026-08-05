@@ -49,6 +49,12 @@ export type RuntimeComputerStatusDb =
   | "error"
   | "stopped";
 
+// M4 — Workspace Snapshot foundations.
+export type ArchivePolicyDb =
+  | "keep_forever"
+  | "delete_after_n_days"
+  | "manual_only";
+
 export type LinearIssueRef = {
   id: string;
   identifier: string;
@@ -146,6 +152,21 @@ type PullRequestRow = {
   created_at: string;
 };
 
+// M4 — the DERIVED, owner-scoped index over Snapshot storage objects. `manifest`
+// is a cached copy of the canonical manifest.json (jsonb, typed as Json here).
+type WorkspaceSnapshotRow = {
+  id: string;
+  owner_id: string;
+  workspace_id: string;
+  archived_at: string;
+  storage_path: string;
+  manifest: Json;
+  policy: ArchivePolicyDb;
+  retention_days: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
 /** Columns the client may supply on insert (defaults fill the rest). */
 type Insert<Row, Required extends keyof Row> = Pick<Row, Required> &
   Partial<Omit<Row, Required | "created_at" | "updated_at">>;
@@ -228,6 +249,23 @@ export type Database = {
           },
         ];
       };
+      workspace_snapshots: {
+        Row: WorkspaceSnapshotRow;
+        Insert: Insert<
+          WorkspaceSnapshotRow,
+          "owner_id" | "workspace_id" | "archived_at" | "storage_path" | "manifest"
+        >;
+        Update: Partial<WorkspaceSnapshotRow>;
+        Relationships: [
+          {
+            foreignKeyName: "workspace_snapshots_owner_workspace_fkey";
+            columns: ["owner_id", "workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["owner_id", "id"];
+          },
+        ];
+      };
     };
     Views: Record<never, never>;
     Functions: Record<never, never>;
@@ -236,6 +274,7 @@ export type Database = {
       provision_phase: ProvisionPhaseDb;
       job_status: JobStatusDb;
       runtime_computer_status: RuntimeComputerStatusDb;
+      archive_policy: ArchivePolicyDb;
     };
     CompositeTypes: Record<never, never>;
   };
