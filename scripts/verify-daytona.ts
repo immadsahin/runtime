@@ -76,6 +76,33 @@ async function main(): Promise<void> {
     const ptyResult = await probePty(agent.ptyUrl(identity));
     console.log(`      ${ptyResult}`);
 
+    // 4b) Writer election: two concurrent PTY sockets. First is writer, second reader.
+    console.log(`\n[4b] writer election (two concurrent PTY sockets) …`);
+    const roles = await probeWriterElection(
+      agent.ptyUrl(identity),
+      agent.ptyUrl(identity),
+    );
+    console.log(`      first=${roles.first} second=${roles.second}`);
+    assert(
+      roles.first === "writer" && roles.second === "reader",
+      `writer election broken: first=${roles.first} second=${roles.second}`,
+    );
+
+    // 4c) SSE /events smoke: initial state frame arrives, headers correct.
+    console.log(`\n[4c] SSE /events (initial state frame) …`);
+    const sse = await probeEvents(agent.eventsUrl(identity));
+    console.log(`      ${sse}`);
+
+    // 4d) Workspace Summary — shape matches the frozen contract.
+    console.log(`\n[4d] GET /workspaces/${identity.workspaceId}/summary …`);
+    const summary = await agent.workspaceSummary(identity);
+    console.log(
+      `      state=${summary.state} duration=${summary.duration}s ` +
+        `changedFiles=${summary.changedFiles} commitCount=${summary.commitCount} ` +
+        `filesTouched=${summary.filesTouched.length} ` +
+        `tokens.in=${summary.tokenUsage.input_tokens} tokens.out=${summary.tokenUsage.output_tokens}`,
+    );
+
     console.log(`\n[5] stopWorkspace …`);
     await agent.stopWorkspace(identity);
     console.log(`      stopped`);
@@ -133,13 +160,105 @@ function probePty(url: string): Promise<string> {
   });
 }
 
+/** Open two WS to the same workspace back-to-back and read each one's role
+ *  frame. First attach must be `writer`, second `reader` — proves the broker. */
+function probeWriterElection(
+  urlA: string,
+  urlB: string,
+): Promise<{ first: string; second: string }> {
+  return new Promise((resolve, reject) => {
+    const waitForRole = (url: string) =>
+      new Promise<string>((resolveRole, rejectRole) => {
+        const ws = new WebSocket(url);
+        const timer = setTimeout(() => {
+          try {
+            ws.close();
+          } catch {
+            /* already closed */
+          }
+          rejectRole(new Error(`no role frame from ${url.slice(0, 40)}…`));
+        }, 5000);
+        ws.addEventListener("message", (event: MessageEvent) => {
+          const msg = safeJson(String(event.data));
+          if (msg?.t === "role") {
+            clearTimeout(timer);
+            resolveRole(msg.writer ? "writer" : "reader");
+            // Keep socket open — we need both connections alive simultaneously
+            // for the second attach to see the writer slot as taken. Caller
+            // closes them when the promise resolves.
+          }
+        });
+        ws.addEventListener("error", () => {
+          clearTimeout(timer);
+          rejectRole(new Error("WS error before role frame"));
+        });
+        // Attach the ws so caller can close it.
+        (resolveRole as unknown as { ws?: WebSocket }).ws = ws;
+      });
+
+    (async () => {
+      const first = waitForRole(urlA);
+      // Wait for the first role to arrive before opening the second, so the
+      // first is definitively in the broker as writer.
+      const firstRole = await first;
+      const secondRole = await waitForRole(urlB);
+      resolve({ first: firstRole, second: secondRole });
+    })().catch(reject);
+  });
+}
+
+/** Open the SSE stream, assert headers + first frame decodes as a state event. */
+async function probeEvents(url: string): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+    if (!res.ok) return `HTTP ${res.status}`;
+    const ct = res.headers.get("content-type") ?? "";
+    if (!ct.includes("text/event-stream")) return `wrong content-type: ${ct}`;
+    if (!res.body) return "no response body";
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return "stream ended before any frame";
+      buffer += decoder.decode(value, { stream: true });
+      const idx = buffer.indexOf("\n\n");
+      if (idx === -1) continue;
+      const frame = buffer.slice(0, idx);
+      const dataLine = frame
+        .split("\n")
+        .find((line) => line.startsWith("data: "));
+      controller.abort();
+      if (!dataLine) return `frame had no data line: ${frame}`;
+      try {
+        const payload = JSON.parse(dataLine.slice("data: ".length)) as {
+          t?: string;
+          state?: string;
+        };
+        if (payload.t !== "state") return `first frame not state: ${JSON.stringify(payload)}`;
+        return `initial state=${payload.state}`;
+      } catch (err) {
+        return `frame data was not JSON: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function printTimings(timings: { stages: { stage: string; ms: number }[]; totalMs: number }): void {
   console.log(`\n    provision timings:`);
   for (const s of timings.stages) console.log(`      ${s.stage.padEnd(15)} ${s.ms} ms`);
   console.log(`      ${"TOTAL".padEnd(15)} ${timings.totalMs} ms`);
 }
 
-function safeJson(text: string): { t?: string; data?: unknown } | null {
+function safeJson(text: string): { t?: string; data?: unknown; writer?: boolean } | null {
   try {
     return JSON.parse(text);
   } catch {

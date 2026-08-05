@@ -85,6 +85,74 @@ export const ErrorResponse = z.object({
 export type ErrorResponse = z.infer<typeof ErrorResponse>;
 
 // ---------------------------------------------------------------------------
+// Workspace Summary — the canonical, cross-milestone summary of a Workspace
+// Session. Frozen jointly with docs/architecture/m4-plan.md (the M4 Snapshot
+// manifest embeds this same shape). Emitted live during a Session and
+// snapshotted into the archive manifest at teardown.
+//
+// M3 owns the type definition (this module + the Go equivalent in
+// runtime-agent/internal/protocol). Every other consumer (Mission Engine,
+// M4 archive/restore, the Runtime SDK, notifications, analytics) imports or
+// mirrors the shape — they do not redefine it.
+// ---------------------------------------------------------------------------
+
+export const WorkspaceState = z.enum([
+  "starting",
+  "running",
+  "exited",
+  "archived",
+  "degraded",
+]);
+export type WorkspaceState = z.infer<typeof WorkspaceState>;
+
+export const WorkspaceSummary = z.object({
+  state: WorkspaceState,
+  /** RFC3339 UTC — when the session first started. */
+  startedAt: z.string(),
+  /** RFC3339 UTC when the session ended, or null while it's still running. */
+  endedAt: z.string().nullable(),
+  /** Wall-clock (endedAt || now) − startedAt, in whole seconds. */
+  duration: z.number().int().nonnegative(),
+  /** RFC3339 UTC of the most recent activity we've observed (message, tool result, …). */
+  lastActivity: z.string(),
+  /** Cumulative token usage across all assistant turns in this session.
+   *  Numeric-only by design (interoperable with M4's placeholder validator
+   *  and Mission Engine's expected shape); `service_tier` stays on the
+   *  standalone `TokenUsage` event where per-turn detail belongs. */
+  tokenUsage: z.object({
+    input_tokens: z.number().int().nonnegative(),
+    output_tokens: z.number().int().nonnegative(),
+    cache_creation_input_tokens: z.number().int().nonnegative(),
+    cache_read_input_tokens: z.number().int().nonnegative(),
+  }),
+  /** Count of paths with any diff (staged + unstaged + untracked). */
+  changedFiles: z.number().int().nonnegative(),
+  /** Sorted union of paths this session has ever touched (committed or WIP). */
+  filesTouched: z.array(z.string()),
+  /** Commits made on this workspace's branch relative to the base branch. */
+  commitCount: z.number().int().nonnegative(),
+  /** The most recent assistant `text` content block, or null if none yet. */
+  lastAssistantMessage: z.string().nullable(),
+});
+export type WorkspaceSummary = z.infer<typeof WorkspaceSummary>;
+
+// ---------------------------------------------------------------------------
+// Session attachment — the browser's handle to one Workspace Session. Returned
+// by POST /api/workspaces/[id]/session. Each URL already contains the short-
+// lived Runtime token (5-min TTL); refresh by re-calling the endpoint on close.
+// See docs/architecture/session-contract.md.
+// ---------------------------------------------------------------------------
+
+export const SessionUrls = z.object({
+  ptyUrl: z.string().url(),
+  eventsUrl: z.string().url().optional(),
+  /** Snapshot of the Workspace Summary at attach time; polled at
+   *  `GET /api/workspaces/[id]/summary` for updates. */
+  summary: WorkspaceSummary.optional(),
+});
+export type SessionUrls = z.infer<typeof SessionUrls>;
+
+// ---------------------------------------------------------------------------
 // Conversation events — derived by the agent from Claude's session JSONL,
 // NOT parsed from the PTY. Grounded in the real schema (Spike 3/4).
 // ---------------------------------------------------------------------------
@@ -149,6 +217,8 @@ export const PROTOCOL_SCHEMAS = {
   CreateWorkspaceRequest,
   WorkspaceActionRequest,
   ErrorResponse,
+  SessionUrls,
+  WorkspaceSummary,
   ConversationMessage,
   TokenUsage,
   WorkspaceStateChanged,

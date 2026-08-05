@@ -11,6 +11,7 @@ import {
   CreateWorkspaceRequest,
   ErrorResponse,
   type RuntimeTokenClaims,
+  WorkspaceSummary,
 } from "@/lib/runtime/agent-protocol";
 import { mintRuntimeToken } from "@/lib/runtime/runtime-token";
 
@@ -64,6 +65,16 @@ export class AgentClient {
   }
 
   /**
+   * Fetch the current WorkspaceSummary for a workspace. Cheap enough for
+   * Mission Engine's polling cadence; the agent maintains the event-driven
+   * fields in memory and shells out to git for the rest at request time.
+   */
+  async workspaceSummary(identity: WorkspaceIdentity): Promise<WorkspaceSummary> {
+    const raw = await this.get(`/workspaces/${identity.workspaceId}/summary`, identity);
+    return WorkspaceSummary.parse(raw);
+  }
+
+  /**
    * The `wss://` URL the browser opens for the live terminal: the signed
    * Daytona preview host (token in the subdomain, so no headers) plus a short
    * Runtime token the agent verifies.
@@ -76,7 +87,35 @@ export class AgentClient {
     return `${base}/pty?token=${encodeURIComponent(token)}`;
   }
 
+  /**
+   * The `https://` URL the browser opens for the Conversation event stream
+   * (SSE). Same signed host as {@link ptyUrl}, same short-lived Runtime token,
+   * but plain HTTP because SSE requires a normal fetch — not a WS upgrade.
+   *
+   * EventSource resends `Last-Event-ID` automatically on transient reconnects;
+   * programmatic reconnects (after token refresh) should append
+   * `?lastEventId=<seq>` — the agent honors either.
+   */
+  eventsUrl(identity: WorkspaceIdentity): string {
+    const base = this.target.signedWsBaseUrl.replace(/\/$/, "");
+    const token = mintRuntimeToken(identity, this.target.secret);
+    return `${base}/events?token=${encodeURIComponent(token)}`;
+  }
+
   private async post(
+    path: string,
+    identity: WorkspaceIdentity,
+    body?: unknown,
+  ): Promise<unknown> {
+    return this.request("POST", path, identity, body);
+  }
+
+  private async get(path: string, identity: WorkspaceIdentity): Promise<unknown> {
+    return this.request("GET", path, identity);
+  }
+
+  private async request(
+    method: "GET" | "POST",
     path: string,
     identity: WorkspaceIdentity,
     body?: unknown,
@@ -85,9 +124,9 @@ export class AgentClient {
     const response = await this.fetchFn(
       `${this.target.controlBaseUrl.replace(/\/$/, "")}${path}`,
       {
-        method: "POST",
+        method,
         headers: {
-          "content-type": "application/json",
+          ...(body !== undefined && { "content-type": "application/json" }),
           authorization: `Bearer ${token}`,
           "x-daytona-preview-token": this.target.daytonaPreviewToken,
         },

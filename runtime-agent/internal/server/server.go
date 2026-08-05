@@ -6,29 +6,50 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 
 	"runtime-agent/internal/auth"
+	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
 	"runtime-agent/internal/workspace"
+)
+
+// Frozen wire contract knobs. 16 ms ≈ 60 fps terminal; 4 KB matches xterm's
+// natural write chunking. Changing these changes user-visible latency, so keep
+// them in one place.
+const (
+	coalesceInterval  = 16 * time.Millisecond
+	coalesceThreshold = 4096
+	// SSE keeps proxies from idling out an in-flight but quiet stream.
+	sseHeartbeat = 20 * time.Second
 )
 
 type Server struct {
 	secret   string
 	ws       *workspace.Service
 	upgrader websocket.Upgrader
+	broker   *ptyx.Broker
 }
 
 func New(secret string, ws *workspace.Service) *Server {
-	return &Server{secret: secret, ws: ws, upgrader: websocket.Upgrader{
-		// The Daytona preview proxy already gates access; the Runtime token in
-		// the URL is the real authorization check.
-		CheckOrigin: func(*http.Request) bool { return true },
-	}}
+	return &Server{
+		secret: secret,
+		ws:     ws,
+		broker: ptyx.NewBroker(),
+		upgrader: websocket.Upgrader{
+			// The Daytona preview proxy already gates access; the Runtime token in
+			// the URL is the real authorization check.
+			CheckOrigin: func(*http.Request) bool { return true },
+		},
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -39,6 +60,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/stop", s.authed(s.stopWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/archive", s.authed(s.archiveWorkspace))
 	mux.HandleFunc("GET /pty", s.pty)
+	mux.HandleFunc("GET /events", s.events)
+	mux.HandleFunc("GET /workspaces/{id}/summary", s.authed(s.workspaceSummary))
 	return mux
 }
 
@@ -88,7 +111,17 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 	respond(w, "archived", err)
 }
 
-// pty bridges the browser WebSocket to the workspace's tmux PTY.
+// workspaceSummary serves the current WorkspaceSummary — the canonical, cross-
+// milestone summary Mission Engine consumes. Cheap enough for polling; git
+// stats are shelled out at request time (typical <20ms on a healthy worktree).
+func (s *Server) workspaceSummary(w http.ResponseWriter, r *http.Request) {
+	summary := s.ws.SummaryOf(r.Context(), r.PathValue("id"))
+	writeJSON(w, http.StatusOK, summary)
+}
+
+// pty bridges the browser WebSocket to the workspace's tmux PTY. Every attach
+// receives PTY output (tmux fans it out), but only the current writer's
+// keystrokes reach the PTY — the broker enforces one-writer per workspace.
 func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.Verify(r.URL.Query().Get("token"), s.secret)
 	if err != nil {
@@ -108,33 +141,58 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	}
 	defer sess.Close()
 
-	go pumpOut(conn, sess)
-	pumpIn(conn, sess)
+	// Serialize all WriteJSON calls on this connection — the coalescer flushes
+	// from its own goroutine, role updates from the broker's, and pongs from
+	// pumpIn. gorilla/websocket requires exclusive writer access.
+	var writeMu sync.Mutex
+	writeFrame := func(msg protocol.PtyServerMessage) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteJSON(msg)
+	}
+
+	// Broker role: attaches this connection, tells us if we're the writer, and
+	// re-notifies us later if a reader is promoted after the writer detaches.
+	setRole := func(writer bool) {
+		w := writer
+		_ = writeFrame(protocol.PtyServerMessage{T: "role", Writer: &w})
+	}
+	attachment := s.broker.Attach(claims.WorkspaceID, setRole)
+	defer attachment.Detach()
+
+	// Output pipeline: PTY → coalescer → WS. Coalescing satisfies the frozen
+	// contract ("output is coalesced") and prevents one-keystroke-per-frame
+	// flooding. Redaction is a no-op until session env plumbing lands (Phase 5).
+	coalescer := ptyx.NewCoalescer(coalesceInterval, coalesceThreshold, func(seq int, data []byte) error {
+		return writeFrame(protocol.PtyServerMessage{T: "output", Data: string(redact(data)), Seq: seq})
+	})
+	go coalescer.Run()
+	defer coalescer.Stop()
+
+	go pumpOut(sess, coalescer, writeFrame)
+	pumpIn(conn, sess, attachment.IsWriter, writeFrame)
 }
 
-// pumpOut streams PTY output to the browser.
-// TODO(M3): coalesce on a ~16-33ms flush, apply backpressure, and run redaction.
-func pumpOut(conn *websocket.Conn, sess *ptyx.Session) {
+// pumpOut reads PTY bytes and hands them to the coalescer, which decides when
+// to flush an `output` frame. On PTY EOF/error, sends `exit` and returns.
+func pumpOut(sess *ptyx.Session, c *ptyx.Coalescer, send func(protocol.PtyServerMessage) error) {
 	buf := make([]byte, 8192)
-	seq := 0
 	for {
 		n, err := sess.Read(buf)
+		if n > 0 {
+			_ = c.Write(buf[:n])
+		}
 		if err != nil {
-			_ = conn.WriteJSON(protocol.PtyServerMessage{T: "exit", Code: intptr(0)})
+			_ = send(protocol.PtyServerMessage{T: "exit", Code: intptr(0)})
 			return
 		}
-		if err := conn.WriteJSON(protocol.PtyServerMessage{
-			T: "output", Data: string(buf[:n]), Seq: seq,
-		}); err != nil {
-			return
-		}
-		seq++
 	}
 }
 
-// pumpIn forwards browser frames to the PTY.
-// TODO(M3): enforce one-writer / read-only for additional connections.
-func pumpIn(conn *websocket.Conn, sess *ptyx.Session) {
+// pumpIn forwards writer input to the PTY; reader input frames are dropped.
+// Resize is honored from any client so a late-joining reader can right-size
+// its own xterm. Ping/pong keeps the connection alive.
+func pumpIn(conn *websocket.Conn, sess *ptyx.Session, isWriter func() bool, send func(protocol.PtyServerMessage) error) {
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
@@ -146,11 +204,142 @@ func pumpIn(conn *websocket.Conn, sess *ptyx.Session) {
 		}
 		switch m.T {
 		case "input":
-			_, _ = sess.Write([]byte(m.Data))
+			if isWriter() {
+				_, _ = sess.Write([]byte(m.Data))
+			}
 		case "resize":
 			_ = sess.Resize(m.Cols, m.Rows)
 		case "ping":
-			_ = conn.WriteJSON(protocol.PtyServerMessage{T: "pong"})
+			_ = send(protocol.PtyServerMessage{T: "pong"})
+		}
+	}
+}
+
+// redact wipes known secrets from PTY output before it crosses the wire. The
+// frozen protocol claims output is redacted; secret plumbing lands with the
+// session-env work in Phase 5, at which point this becomes non-trivial. The
+// call site is intentionally in place today so the contract isn't a lie.
+func redact(b []byte) []byte { return b }
+
+// events serves the Conversation event stream as SSE.
+//
+// Frames:
+//
+//	id: <byte-offset-into-JSONL>
+//	data: <AgentEvent JSON>
+//
+// The `id:` line is the JSONL byte offset AT THE END of the emitted record.
+// On reconnect, the browser's EventSource resends it as `Last-Event-ID`; the
+// agent starts its watcher at that offset, so no event is duplicated or
+// skipped between disconnect and reconnect. This is the entire correctness
+// contract of the stream.
+func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.Verify(r.URL.Query().Get("token"), s.secret)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
+		return
+	}
+
+	fromOffset := int64(0)
+	if h := r.Header.Get("Last-Event-ID"); h != "" {
+		if v, perr := strconv.ParseInt(h, 10, 64); perr == nil && v > 0 {
+			fromOffset = v
+		}
+	}
+	// Programmatic reconnects (browser-initiated close then reopen) can't set
+	// the header; allow ?lastEventId= as an escape hatch.
+	if q := r.URL.Query().Get("lastEventId"); q != "" && fromOffset == 0 {
+		if v, perr := strconv.ParseInt(q, 10, 64); perr == nil && v > 0 {
+			fromOffset = v
+		}
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // disable nginx/proxy buffering
+	w.WriteHeader(http.StatusOK)
+
+	// Serialize every write on this response — the ticker, the watcher goroutine,
+	// and the state emitter all write frames concurrently.
+	var writeMu sync.Mutex
+	writeSSE := func(id int64, payload []byte) bool {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		if _, err := fmt.Fprintf(w, "id: %d\ndata: %s\n\n", id, payload); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+	writeHeartbeat := func() bool {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	// Synthetic initial `state` event so subscribers know whether the workspace
+	// is running before any conversation event lands. Not resumable — clients
+	// re-observe the state on each connect. Emitted only on fresh connects
+	// (fromOffset == 0) so a resume doesn't re-fire it.
+	if fromOffset == 0 {
+		state := "starting"
+		if s.ws.SessionLog(claims.WorkspaceID) != "" {
+			state = "running"
+		}
+		payload, _ := json.Marshal(protocol.WorkspaceStateChanged{
+			T: "state", WorkspaceID: claims.WorkspaceID, State: state,
+		})
+		if !writeSSE(0, payload) {
+			return
+		}
+	}
+
+	// Watcher tails the JSONL and delivers events on `out`. Its lifetime is
+	// tied to the HTTP request context — when the browser closes the SSE
+	// connection, r.Context() cancels and the watcher exits.
+	pathFn := func() string { return s.ws.SessionLog(claims.WorkspaceID) }
+	watcher := conversation.New(pathFn, fromOffset)
+	out := make(chan conversation.Event, 64)
+	go watcher.Run(r.Context(), out)
+
+	heartbeat := time.NewTicker(sseHeartbeat)
+	defer heartbeat.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev := <-out:
+			var payload []byte
+			var mErr error
+			switch {
+			case ev.Message != nil:
+				payload, mErr = json.Marshal(ev.Message)
+			case ev.Usage != nil:
+				payload, mErr = json.Marshal(ev.Usage)
+			default:
+				continue
+			}
+			if mErr != nil {
+				continue
+			}
+			if !writeSSE(ev.ID, payload) {
+				return
+			}
+		case <-heartbeat.C:
+			if !writeHeartbeat() {
+				return
+			}
 		}
 	}
 }
