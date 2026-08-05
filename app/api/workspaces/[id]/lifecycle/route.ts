@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import {
-  getWorkspace,
-  hasActiveJob,
-  transitionWorkspace,
-} from "@/lib/db/repositories";
+import { getWorkspace, transitionWorkspace } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
@@ -159,7 +155,11 @@ async function suspendWorkspace(workspace: Workspace, provider: RuntimeProvider)
       { status: 409 },
     );
   }
-  if (await hasActiveJob(workspace.id)) return activeJobConflict("suspended");
+  // Interactive Runtime no longer derives lifecycle state from the jobs table:
+  // the runtime-agent (tmux + Claude session) is the source of truth for active
+  // execution, so suspend/destroy decide on the Runtime Computer's live session.
+  // Legacy batch job rows are intentionally ignored — do NOT reintroduce a
+  // jobs-table guard (e.g. hasActiveJob) here.
   const transitioned = await startTransition(workspace, ["ready", "idle"], "suspending");
   if (!transitioned) return lifecycleConflict();
 
@@ -199,7 +199,8 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
       { status: 409 },
     );
   }
-  if (await hasActiveJob(workspace.id)) return activeJobConflict("destroyed");
+  // Legacy batch job rows are intentionally ignored here too — runtime-agent, not
+  // the jobs table, owns active-execution state (see suspendWorkspace).
   const transitioned = await startTransition(workspace, destroyable, "destroying");
   if (!transitioned) return lifecycleConflict();
 
@@ -241,13 +242,6 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
 function lifecycleConflict() {
   return NextResponse.json(
     { error: "This workspace changed in another session. Refresh and try again." },
-    { status: 409 },
-  );
-}
-
-function activeJobConflict(nextState: "suspended" | "destroyed") {
-  return NextResponse.json(
-    { error: `Finish or cancel the active Claude job before this workspace can be ${nextState}.` },
     { status: 409 },
   );
 }

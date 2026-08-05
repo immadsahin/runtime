@@ -1,10 +1,8 @@
 import { spawn } from "node:child_process";
-import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { agentCommand } from "@/lib/runtime/agent";
 import {
   addWorktree,
   cloneRepo,
@@ -23,14 +21,8 @@ import type {
   CreatePullRequestResult,
   CreateWorkspaceInput,
   CreateWorkspaceResult,
-  ExecuteJobInput,
-  ExecuteJobResult,
-  JobPaths,
-  JobResult,
-  LogChunk,
   PushWorkspaceBranchInput,
   RuntimeProvider,
-  StreamLogsInput,
 } from "@/lib/runtime/types";
 
 const ROOT =
@@ -95,8 +87,6 @@ export class LocalRuntimeProvider implements RuntimeProvider {
       base,
       repo: path.join(base, "repo"),
       worktrees: path.join(base, "worktrees"),
-      logs: path.join(base, ".runtime", "logs"),
-      env: path.join(base, ".runtime", "env"),
       provisionWarnings: path.join(base, ".runtime", "provision-warnings.log"),
     };
   }
@@ -108,7 +98,7 @@ export class LocalRuntimeProvider implements RuntimeProvider {
 
     await input.onPhase?.("allocate");
     await fs.mkdir(p.worktrees, { recursive: true });
-    await fs.mkdir(p.logs, { recursive: true });
+    await fs.mkdir(path.dirname(p.provisionWarnings), { recursive: true });
 
     await input.onPhase?.("clone");
     if (!(await exists(p.repo))) {
@@ -176,101 +166,6 @@ export class LocalRuntimeProvider implements RuntimeProvider {
   async sandboxAlive(sandboxId: string): Promise<boolean> {
     // The "sandbox" is just this host, so its handle never expires.
     return sandboxId.length > 0;
-  }
-
-  async executeJob(input: ExecuteJobInput): Promise<ExecuteJobResult> {
-    const p = this.paths(input.workspaceId);
-    await fs.mkdir(p.logs, { recursive: true });
-    const { logPath, resultPath } = this.getJobPaths(input);
-    await fs.writeFile(logPath, "");
-    await fs.rm(resultPath, { force: true });
-    if (Object.keys(input.env).length > 0) {
-      await fs.mkdir(path.dirname(p.env), { recursive: true });
-      await writeEnvironmentFile(p.env, input.env);
-    }
-
-    const worktree = await firstWorktree(p.worktrees);
-    const completion = completionScript(
-      agentCommand(input.agent, input),
-      logPath,
-      resultPath,
-    );
-
-    // Detached: the job outlives this HTTP request, exactly like Modal.
-    const child = spawn(
-      "bash",
-      ["-lc", `${sourceEnvironmentCommand(p.env, true)} ${completion}`],
-      {
-        cwd: worktree ?? p.base,
-        detached: true,
-        env: safeChildEnvironment(),
-        stdio: "ignore",
-      },
-    );
-    child.unref();
-
-    return { logPath, resultPath, executionHandle: String(child.pid ?? "") };
-  }
-
-  getJobPaths(input: { workspaceId: string; jobId: string }): JobPaths {
-    const logs = this.paths(input.workspaceId).logs;
-    return {
-      logPath: path.join(logs, `${input.jobId}.log`),
-      resultPath: path.join(logs, `${input.jobId}.result.json`),
-    };
-  }
-
-  async getJobResult(input: {
-    workspaceId: string;
-    jobId: string;
-    resultPath: string;
-  }): Promise<JobResult | null> {
-    const p = this.paths(input.workspaceId);
-    const expected = path.join(p.logs, `${input.jobId}.result.json`);
-    if (path.resolve(input.resultPath) !== path.resolve(expected)) {
-      throw new Error("Invalid job result path");
-    }
-    try {
-      const metadata = await fs.lstat(expected);
-      if (!metadata.isFile() || metadata.isSymbolicLink()) {
-        throw new Error("Job result is not a regular provider-owned file");
-      }
-      const parsed = JSON.parse(await fs.readFile(expected, "utf8")) as unknown;
-      return isJobResult(parsed) ? parsed : null;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    }
-  }
-
-  async *streamLogs(input: StreamLogsInput): AsyncIterable<LogChunk> {
-    const p = this.paths(input.workspaceId);
-    const expected = path.join(p.logs, `${input.jobId}.log`);
-    if (path.resolve(input.logPath) !== path.resolve(expected)) {
-      throw new Error("Invalid job log path");
-    }
-    let offset = input.fromOffset ?? 0;
-
-    while (!input.signal?.aborted) {
-      let size = 0;
-      try {
-        const metadata = await fs.lstat(expected);
-        if (!metadata.isFile() || metadata.isSymbolicLink()) {
-          throw new Error("Job log is not a regular provider-owned file");
-        }
-        size = metadata.size;
-      } catch {
-        await sleep(500);
-        continue;
-      }
-
-      if (size > offset) {
-        const chunk = await readRange(input.logPath, offset, size - 1);
-        offset = size;
-        yield { offset, text: chunk };
-      }
-      await sleep(400);
-    }
   }
 
   async suspendWorkspace(): Promise<void> {
@@ -396,16 +291,6 @@ function run(
   });
 }
 
-function readRange(file: string, start: number, end: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    const stream = createReadStream(file, { start, end, encoding: "utf8" });
-    stream.on("data", (c) => (data += c));
-    stream.on("end", () => resolve(data));
-    stream.on("error", reject);
-  });
-}
-
 async function exists(p: string): Promise<boolean> {
   try {
     await fs.access(p);
@@ -413,34 +298,6 @@ async function exists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function sourceEnvironmentCommand(file: string, removeAfterLoad = false): string {
-  const quoted = shellQuote(file);
-  return `if [ -f ${quoted} ]; then set -a; . ${quoted}; ${removeAfterLoad ? `rm -f ${quoted}; ` : ""}set +a; fi;`;
-}
-
-async function writeEnvironmentFile(
-  file: string,
-  env: Record<string, string>,
-): Promise<void> {
-  const entries = Object.entries(env).sort(([a], [b]) => a.localeCompare(b));
-  for (const [key] of entries) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-      throw new Error(`Invalid environment variable name: ${key}`);
-    }
-  }
-  await fs.writeFile(
-    file,
-    entries
-      .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
-      .join("\n"),
-    { mode: 0o600 },
-  );
 }
 
 function safeChildEnvironment(
@@ -456,40 +313,6 @@ function safeChildEnvironment(
   return additions ? Object.assign(environment, additions) : environment;
 }
 
-function completionScript(
-  command: string,
-  logPath: string,
-  resultPath: string,
-): string {
-  const log = shellQuote(logPath);
-  const result = shellQuote(resultPath);
-  return [
-    "umask 077",
-    "set +e",
-    `${command} >> ${log} 2>&1`,
-    "exit_code=$?",
-    'if [ "$exit_code" -eq 0 ]; then result_status=succeeded; else result_status=failed; fi',
-    `printf '{"status":"%s","exitCode":%s,"finishedAt":"%s"}\n' "$result_status" "$exit_code" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ${result}`,
-    "exit 0",
-  ].join("; ");
-}
-
-function isJobResult(value: unknown): value is JobResult {
-  if (!value || typeof value !== "object") return false;
-  const result = value as Record<string, unknown>;
-  return (
-    (result.status === "succeeded" ||
-      result.status === "failed" ||
-      result.status === "cancelled") &&
-    (typeof result.exitCode === "number" || result.exitCode === null) &&
-    typeof result.finishedAt === "string"
-  );
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }
