@@ -34,6 +34,7 @@ export type Project = {
  * Lifecycle: creating -> provisioning -> ready(claude_ready) -> idle
  *            -> suspending -> suspended -> resuming -> ready -> destroying
  *            -> destroyed
+ * M4 archive/restore: ready/idle -> archiving -> archived -> restoring -> ready.
  */
 export type WorkspaceStatus =
   | "creating"
@@ -45,6 +46,9 @@ export type WorkspaceStatus =
   | "suspended"
   | "destroying"
   | "destroyed"
+  | "archiving"
+  | "archived"
+  | "restoring"
   | "failed";
 
 /** Ordered provisioning phases, surfaced in the UI as a checklist. */

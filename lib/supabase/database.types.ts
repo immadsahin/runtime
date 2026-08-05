@@ -23,6 +23,9 @@ export type WorkspaceStatusDb =
   | "suspended"
   | "destroying"
   | "destroyed"
+  | "archiving"
+  | "archived"
+  | "restoring"
   | "failed";
 
 export type ProvisionPhaseDb =
