@@ -6,6 +6,7 @@ import { useRef } from "react";
 
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
+import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
 
 /**
@@ -22,8 +23,9 @@ export function PtySpikeClient({
   branch: string;
 }) {
   const terminalContainer = useRef<HTMLDivElement>(null);
-  const terminal = useSessionTerminal(workspaceId, terminalContainer);
-  const conversation = useConversationStream(workspaceId);
+  const attachment = useSessionAttachment(workspaceId);
+  const terminal = useSessionTerminal(attachment, terminalContainer);
+  const conversation = useConversationStream(attachment);
 
   return (
     <div className="flex h-dvh flex-col bg-neutral-950 text-neutral-100">

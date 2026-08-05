@@ -60,8 +60,16 @@ export class AgentClient {
     return this.post(`/workspaces/${identity.workspaceId}/stop`, identity);
   }
 
+  resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/resume`, identity);
+  }
+
   archiveWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
     return this.post(`/workspaces/${identity.workspaceId}/archive`, identity);
+  }
+
+  destroyWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/destroy`, identity);
   }
 
   /**

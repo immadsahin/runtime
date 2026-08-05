@@ -6,6 +6,8 @@ import { getOwner } from "@/lib/auth/owner";
 import {
   createWorkspaceRow,
   getProject,
+  getRuntimeComputerByProject,
+  markRuntimeComputerStoppedIfReady,
   updateWorkspace,
 } from "@/lib/db/repositories";
 import { optionalEnv } from "@/lib/env";
@@ -129,6 +131,23 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     if (provider instanceof DaytonaRuntimeProvider) {
       const githubToken = optionalEnv("GITHUB_PAT");
+
+      // A Runtime Computer is intentionally long-lived, but it can still be
+      // removed outside Runtime (or become unavailable after a provider
+      // incident). Only transition the exact ready row we checked so parallel
+      // requests retain the claim RPC's single-provisioner invariant.
+      const currentComputer = await getRuntimeComputerByProject(project.id);
+      if (
+        currentComputer?.status === "ready" &&
+        currentComputer.daytonaSandboxId &&
+        !(await provider.computerAlive(currentComputer.daytonaSandboxId))
+      ) {
+        await markRuntimeComputerStoppedIfReady(
+          currentComputer.id,
+          currentComputer.daytonaSandboxId,
+        );
+      }
+
       const ensured = await ensureProjectRuntimeComputer(provider, {
         projectId: project.id,
         repoFullName: project.fullName,

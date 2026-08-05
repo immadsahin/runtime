@@ -29,9 +29,24 @@ honored on the agent side:
    readers. If the writer disconnects, the oldest waiting reader is promoted
    and re-notified. Reader `input` frames are dropped.
 
-Redaction remains a documented pass-through in `server.go` (`redact()`).
-Session secrets aren't yet wired into the agent's memory; Phase 5 lands that
-plumbing and turns redaction on without any protocol change.
+### Security hardening added before Phase 5 completion
+
+The early spike deliberately left PTY redaction as a pass-through. That is no
+longer acceptable once a Runtime Computer receives Claude credentials:
+
+- The agent removes `RUNTIME_AGENT_SECRET`, `RUNTIME_AGENT_ROOT`, and `PORT`
+  from the environment passed to tmux/Claude. Only the supported Claude
+  credentials remain available to the interactive process.
+- `server.Redactor` replaces known credential values before PTY output crosses
+  the WebSocket. It keeps a suffix between reads, so a secret split across two
+  PTY/coalescer chunks cannot leak.
+- Control routes retain verified token claims and reject any body/path workspace
+  that differs from `claims.workspaceId`; a token for one workspace cannot
+  inspect, stop, archive, resume, or destroy another workspace on the same
+  Runtime Computer.
+- Runtime tokens now require every identity claim plus a positive expiry;
+  WebSocket input is limited to 64 KiB and invalid/unsafe resize frames are
+  dropped.
 
 ### Client surface added
 
@@ -346,11 +361,51 @@ Provisionally frozen — first exercised in a real user flow in Phase 5/6:
 
 ## Phase 4 — Lazy provisioning
 
-_Filled in when Phase 4 lands._
+### Implementation
+
+- `ensureRuntimeComputer` atomically claims or reuses one `runtime_computers`
+  record per project. A winning request provisions the Daytona Runtime Computer
+  and persists the agent connection metadata; concurrent workspace requests
+  wait for/reuse that row instead of creating duplicate boxes.
+- Workspace creation resolves the project computer, refreshes the shared bare
+  mirror, asks the agent to create an isolated worktree, starts Claude, and
+  saves the computer/worktree/session linkage on the workspace.
+- Daytona lifecycle routing now drives agent-backed resume and destroy paths;
+  changed-file and bounded-diff reads, commit/push, and PR publishing execute
+  in the Daytona worktree rather than a control-plane checkout.
+
+### Coverage
+
+- `test/ensure-runtime-computer.test.ts` covers concurrent first-workspace
+  creation, failed provision persistence, and a later retry claim.
+- Daytona provider, agent client, Git, and lifecycle route tests exercise the
+  typed control-plane contracts.
 
 ## Phase 5 — Workspace Experience
 
-_Filled in when Phase 5 lands. **After Phase 5, the Session API is frozen.**_
+### Implementation
+
+- `WorkspaceSession` replaces the terminal placeholder in the studio with an
+  xterm terminal, a virtualized structured `ConversationTimeline`, connection
+  indicators, writer/read-only role, exit handling, and a reconnect action.
+- `useSessionAttachment` owns refresh of short-lived PTY/SSE URLs. Terminal
+  and conversation hooks share that attachment, preserving terminal scrollback
+  and the JSONL event cursor while coalescing simultaneous reconnects.
+- Terminal output and Claude JSONL-derived events remain independent
+  projections. Only `WorkspaceStateChanged` events update authoritative
+  conversation state; terminal text is never interpreted as conversation data.
+
+### Current verification
+
+- `pnpm typecheck`, `pnpm lint` (one existing TanStack Virtual compatibility
+  warning), `pnpm test` (85 tests), and `cd runtime-agent && go test ./...`
+  pass.
+- The managed preview renders `/signin` with the GitHub OAuth action.
+- The authenticated end-to-end acceptance remains blocked in this sandbox by
+  missing Daytona credentials; this is not represented as a completed live-box
+  result.
+
+**The Session API is now frozen for M3 except for verified Phase 6 defects.**
 
 ## Phase 6 — Acceptance Test on a live box
 

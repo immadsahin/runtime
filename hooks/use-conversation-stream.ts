@@ -6,7 +6,7 @@ import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
 import { subscribeEvents } from "@/lib/runtime/session-client";
 
-import { useSessionAttachment } from "./use-session-attachment";
+import type { SessionAttachment } from "./use-session-attachment";
 
 export type ConversationStreamState = {
   events: AgentEvent[];
@@ -51,18 +51,25 @@ function wsReducer(state: WsStatus, action: WsAction): WsStatus {
  * hook re-fetches URLs, but the cursor survives so subscribeEvents starts
  * from exactly where we left off.
  */
-export function useConversationStream(workspaceId: string): ConversationStreamState {
-  const attachment = useSessionAttachment(workspaceId);
+export function useConversationStream(attachment: SessionAttachment): ConversationStreamState {
+  const {
+    urls,
+    status: attachmentStatus,
+    error: attachmentError,
+    attachId,
+    reconnect,
+    refresh,
+  } = attachment;
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [ws, dispatch] = useReducerState();
   const lastEventIdRef = useRef<string | null>(null);
   const seenIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    const url = attachment.urls?.eventsUrl;
-    if (!url || attachment.status !== "attached") return;
+    const url = urls?.eventsUrl;
+    if (!url || attachmentStatus !== "attached") return;
 
-    let reattachTimer: ReturnType<typeof setTimeout> | null = null;
+    let active = true;
 
     const sub = subscribeEvents(
       url,
@@ -77,35 +84,38 @@ export function useConversationStream(workspaceId: string): ConversationStreamSt
       {
         lastEventId: lastEventIdRef.current,
         onClose: () => {
+          if (!active) return;
           dispatch({ kind: "closed" });
-          reattachTimer = setTimeout(() => attachment.refresh(), 500);
+          // The shared attachment coalesces simultaneous terminal and SSE
+          // closes into a single URL refresh.
+          reconnect();
         },
         onError: (err) => dispatch({ kind: "error", message: err.message }),
       },
     );
 
     return () => {
-      if (reattachTimer) clearTimeout(reattachTimer);
+      active = false;
       sub.dispose();
     };
-  }, [attachment.attachId, attachment.status, attachment.urls?.eventsUrl, attachment, dispatch]);
+  }, [attachId, attachmentStatus, dispatch, reconnect, urls?.eventsUrl]);
 
   const status = useMemo<ConversationStreamState["status"]>(() => {
-    if (attachment.status === "loading") return "loading";
-    if (attachment.status === "error") return "error";
+    if (attachmentStatus === "loading") return "loading";
+    if (attachmentStatus === "error") return "error";
     if (ws.error && ws.closed) return "error";
     if (ws.closed) return "disconnected";
     // We consider ourselves "connected" once at least one frame arrived (the
     // agent emits an initial state event on every fresh connect, so this
     // resolves within one round trip). Before that, we're still connecting.
     return events.length > 0 ? "connected" : "connecting";
-  }, [attachment.status, ws.error, ws.closed, events.length]);
+  }, [attachmentStatus, ws.error, ws.closed, events.length]);
 
   return {
     events,
     status,
-    error: ws.error ?? attachment.error,
-    refresh: attachment.refresh,
+    error: ws.error ?? attachmentError,
+    refresh,
   };
 }
 

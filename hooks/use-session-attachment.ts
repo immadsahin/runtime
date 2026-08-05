@@ -27,6 +27,11 @@ export type SessionAttachment = {
   attachId: number;
   /** Fetch fresh URLs. Idempotent while a fetch is in flight. */
   refresh: () => void;
+  /**
+   * Ask the shared attachment owner to refresh after a transient transport
+   * close. Calls made by the terminal and event projections are coalesced.
+   */
+  reconnect: () => void;
 };
 
 export function useSessionAttachment(workspaceId: string): SessionAttachment {
@@ -36,8 +41,13 @@ export function useSessionAttachment(workspaceId: string): SessionAttachment {
   const [attachId, setAttachId] = useState(0);
 
   const inflight = useRef<AbortController | null>(null);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(() => {
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current);
+      reconnectTimer.current = null;
+    }
     if (inflight.current) return;
     const controller = new AbortController();
     inflight.current = controller;
@@ -74,13 +84,26 @@ export function useSessionAttachment(workspaceId: string): SessionAttachment {
     })();
   }, [workspaceId]);
 
+  const reconnect = useCallback(() => {
+    // Both browser projections can notice the same network close. The
+    // attachment, rather than either projection, owns the retry so that one
+    // close produces one fresh pair of short-lived URLs.
+    if (inflight.current || reconnectTimer.current) return;
+    reconnectTimer.current = setTimeout(() => {
+      reconnectTimer.current = null;
+      refresh();
+    }, 500);
+  }, [refresh]);
+
   useEffect(() => {
     refresh();
     return () => {
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      reconnectTimer.current = null;
       inflight.current?.abort();
       inflight.current = null;
     };
   }, [refresh]);
 
-  return { urls, status, error, attachId, refresh };
+  return { urls, status, error, attachId, refresh, reconnect };
 }

@@ -348,6 +348,33 @@ export async function updateRuntimeComputer(
 }
 
 /**
+ * Mark a ready Runtime Computer stopped only if it still refers to the exact
+ * Daytona sandbox we just found unavailable. The compare-and-set guards the
+ * lazy-provisioning claim: two simultaneous New Workspace requests can both
+ * observe a dead box, but only one is allowed to make it retryable.
+ */
+export async function markRuntimeComputerStoppedIfReady(
+  id: string,
+  daytonaSandboxId: string,
+): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("runtime_computers")
+    .update({
+      status: "stopped",
+      error_message: "Runtime Computer is no longer available and will be reprovisioned.",
+    })
+    .eq("id", id)
+    .eq("status", "ready")
+    .eq("daytona_sandbox_id", daytonaSandboxId)
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw error;
+  return Boolean(data);
+}
+
+/**
  * Read the server-only per-computer secret used to mint Runtime tokens. Kept
  * out of the domain object (see {@link toRuntimeComputer}) so it never rides
  * along into a browser-facing payload; callers ask for it explicitly.

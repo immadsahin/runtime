@@ -40,6 +40,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# agent scratch artifacts (screenshots, recordings)
+# agent scratch artifacts (screenshots, recordings, and uploaded attachments)
+/artifacts/
 /.artifacts/
+/.hoplite/attachments/
 /.hoplite/archive/

@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getWorkspace, transitionWorkspace } from "@/lib/db/repositories";
+import {
+  getRuntimeComputerByProject,
+  getWorkspace,
+  readRuntimeComputerSecret,
+  transitionWorkspace,
+} from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 
@@ -67,7 +74,8 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
 
-  if (!(await getOwner())) {
+  const owner = await getOwner();
+  if (!owner) {
     return NextResponse.json(
       { error: "Sign in as the Runtime owner." },
       { status: 401 },
@@ -94,9 +102,153 @@ export async function POST(request: Request, context: RouteContext) {
   if (!resolution.ok) return providerErrorResponse(resolution);
   const provider = resolution.provider;
 
+  if (provider instanceof DaytonaRuntimeProvider) {
+    return daytonaLifecycle(action, workspace, provider, owner.id);
+  }
+
   if (action === "resume") return resumeWorkspace(workspace, provider);
   if (action === "suspend") return suspendWorkspace(workspace, provider);
   return destroyWorkspace(workspace, provider);
+}
+
+async function daytonaLifecycle(
+  action: LifecycleAction,
+  workspace: Workspace,
+  provider: DaytonaRuntimeProvider,
+  userId: string,
+) {
+  if (action === "resume") return resumeDaytonaWorkspace(workspace, provider, userId);
+  if (action === "suspend") return suspendDaytonaWorkspace(workspace, provider, userId);
+  return destroyDaytonaWorkspace(workspace, provider, userId);
+}
+
+async function daytonaAgent(
+  workspace: Workspace,
+  provider: DaytonaRuntimeProvider,
+  userId: string,
+): Promise<{ agent: AgentClient; identity: WorkspaceIdentity }> {
+  const computer = await getRuntimeComputerByProject(workspace.projectId);
+  if (!computer?.daytonaSandboxId || computer.status !== "ready") {
+    throw new Error("Runtime Computer is not available.");
+  }
+  const secret = await readRuntimeComputerSecret(computer.id);
+  if (!secret) throw new Error("Runtime Computer secret is missing.");
+  const target = await provider.agentTarget(computer.daytonaSandboxId, secret);
+  return {
+    agent: new AgentClient(target),
+    identity: {
+      workspaceId: workspace.id,
+      projectId: workspace.projectId,
+      computerId: computer.id,
+      userId,
+    },
+  };
+}
+
+async function resumeDaytonaWorkspace(
+  workspace: Workspace,
+  provider: DaytonaRuntimeProvider,
+  userId: string,
+) {
+  if (workspace.status !== "suspended") {
+    return NextResponse.json(
+      { error: "Only a suspended workspace can be resumed." },
+      { status: 409 },
+    );
+  }
+  const transitioned = await startTransition(workspace, ["suspended"], "resuming");
+  if (!transitioned) return lifecycleConflict();
+  try {
+    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    await agent.resumeWorkspace(identity);
+  } catch (error) {
+    console.error(`Workspace ${workspace.id} resume failed`, error);
+    await restoreAfterFailure(workspace, "resuming", lifecycleError("resume")).catch(
+      (updateError: unknown) => console.error("Could not persist resume failure", updateError),
+    );
+    return NextResponse.json({ error: lifecycleError("resume") }, { status: 502 });
+  }
+  const completed = await completeTransition({
+    id: workspace.id,
+    from: "resuming",
+    patch: { status: "ready", errorMessage: null, touchActive: true },
+  });
+  return completed
+    ? NextResponse.json({ workspace: { id: workspace.id, status: "ready" } })
+    : lifecycleReconciliationRequired("resume");
+}
+
+async function suspendDaytonaWorkspace(
+  workspace: Workspace,
+  provider: DaytonaRuntimeProvider,
+  userId: string,
+) {
+  if (workspace.status !== "ready" && workspace.status !== "idle") {
+    return NextResponse.json(
+      { error: "Only an active workspace can be suspended." },
+      { status: 409 },
+    );
+  }
+  const transitioned = await startTransition(workspace, ["ready", "idle"], "suspending");
+  if (!transitioned) return lifecycleConflict();
+  try {
+    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    await agent.stopWorkspace(identity);
+  } catch (error) {
+    console.error(`Workspace ${workspace.id} suspend failed`, error);
+    await restoreAfterFailure(workspace, "suspending", lifecycleError("suspend")).catch(
+      (updateError: unknown) => console.error("Could not persist suspend failure", updateError),
+    );
+    return NextResponse.json({ error: lifecycleError("suspend") }, { status: 502 });
+  }
+  const completed = await completeTransition({
+    id: workspace.id,
+    from: "suspending",
+    patch: { status: "suspended", errorMessage: null },
+  });
+  return completed
+    ? NextResponse.json({ workspace: { id: workspace.id, status: "suspended" } })
+    : lifecycleReconciliationRequired("suspend");
+}
+
+async function destroyDaytonaWorkspace(
+  workspace: Workspace,
+  provider: DaytonaRuntimeProvider,
+  userId: string,
+) {
+  const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "failed"];
+  if (!destroyable.includes(workspace.status)) {
+    return NextResponse.json(
+      { error: "This workspace cannot be destroyed while another lifecycle action is running." },
+      { status: 409 },
+    );
+  }
+  const transitioned = await startTransition(workspace, destroyable, "destroying");
+  if (!transitioned) return lifecycleConflict();
+  try {
+    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    await agent.destroyWorkspace(identity);
+  } catch (error) {
+    console.error(`Workspace ${workspace.id} destroy failed`, error);
+    await restoreAfterFailure(workspace, "destroying", lifecycleError("destroy")).catch(
+      (updateError: unknown) => console.error("Could not persist destroy failure", updateError),
+    );
+    return NextResponse.json({ error: lifecycleError("destroy") }, { status: 502 });
+  }
+  const completed = await completeTransition({
+    id: workspace.id,
+    from: "destroying",
+    patch: {
+      status: "destroyed",
+      sandboxId: null,
+      volumeName: null,
+      worktreePath: null,
+      errorMessage: null,
+    },
+  });
+  return completed
+    ? NextResponse.json({ workspace: { id: workspace.id, status: "destroyed" } })
+    : lifecycleReconciliationRequired("destroy");
 }
 
 async function resumeWorkspace(workspace: Workspace, provider: RuntimeProvider) {

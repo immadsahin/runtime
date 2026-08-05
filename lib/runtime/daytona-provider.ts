@@ -14,7 +14,15 @@ import {
   uploadAgent,
   waitForAgentHealth,
 } from "@/lib/runtime/daytona/deploy";
-import { cloneMirror, fetchMirror, type GitExec } from "@/lib/runtime/git";
+import {
+  cloneMirror,
+  commitAll,
+  fetchMirror,
+  listChangedFiles,
+  pushBranch,
+  readFileDiff,
+  type GitExec,
+} from "@/lib/runtime/git";
 import type {
   ChangedFile,
   CommitWorkspaceResult,
@@ -236,6 +244,53 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
     await fetchMirror(this.gitExec(sandbox), {
       repoDir: MIRROR_PATH,
       token: githubToken,
+    });
+  }
+
+  /** Git projection for one interactive worktree on the shared computer. */
+  async listWorkspaceChangedFiles(
+    sandboxId: string,
+    worktreePath: string,
+  ): Promise<ChangedFile[]> {
+    const sandbox = await this.daytona().get(sandboxId);
+    return listChangedFiles(this.gitExec(sandbox), { worktree: worktreePath });
+  }
+
+  /** Bounded diff for one changed path in an interactive worktree. */
+  async readWorkspaceChangedFileDiff(
+    sandboxId: string,
+    worktreePath: string,
+    filePath: string,
+  ): Promise<string> {
+    const sandbox = await this.daytona().get(sandboxId);
+    return readFileDiff(this.gitExec(sandbox), {
+      worktree: worktreePath,
+      path: filePath,
+    });
+  }
+
+  /** Commit all current changes in a Runtime worktree. */
+  async commitWorkspaceChanges(
+    sandboxId: string,
+    worktreePath: string,
+    input: { message: string; author: { name: string; email: string } },
+  ): Promise<CommitWorkspaceResult> {
+    const sandbox = await this.daytona().get(sandboxId);
+    return commitAll(this.gitExec(sandbox), { worktree: worktreePath, ...input });
+  }
+
+  /** Push an interactive worktree's persisted branch with a request-scoped token. */
+  async pushWorkspaceChanges(
+    sandboxId: string,
+    worktreePath: string,
+    input: { repoFullName: string; branch: string; githubToken: string },
+  ): Promise<void> {
+    const sandbox = await this.daytona().get(sandboxId);
+    await pushBranch(this.gitExec(sandbox), {
+      worktree: worktreePath,
+      repoFullName: input.repoFullName,
+      branch: input.branch,
+      token: input.githubToken,
     });
   }
 

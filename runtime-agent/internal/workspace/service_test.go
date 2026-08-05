@@ -52,6 +52,23 @@ func TestGitBranchReturnsEmptyOutsideRepo(t *testing.T) {
 	}
 }
 
+func TestSessionEnvironmentExcludesAgentControlSecrets(t *testing.T) {
+	env, secrets := sessionEnvironment([]string{
+		"PATH=/usr/bin",
+		"RUNTIME_AGENT_SECRET=control-secret",
+		"RUNTIME_AGENT_ROOT=/home/runtime",
+		"PORT=8080",
+		"CLAUDE_CODE_OAUTH_TOKEN=claude-secret",
+	})
+	got := strings.Join(env, "\n")
+	if strings.Contains(got, "RUNTIME_AGENT_SECRET") || strings.Contains(got, "RUNTIME_AGENT_ROOT") || strings.Contains(got, "PORT=8080") {
+		t.Fatalf("agent control variables leaked to session environment: %q", got)
+	}
+	if !strings.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN=claude-secret") || len(secrets) != 1 || secrets[0] != "claude-secret" {
+		t.Fatalf("Claude credential was not retained safely: env=%q secrets=%q", got, secrets)
+	}
+}
+
 // initRepoOnBranch creates a throwaway git repo checked out on the named branch
 // and returns its path.
 func initRepoOnBranch(t *testing.T, branch string) string {

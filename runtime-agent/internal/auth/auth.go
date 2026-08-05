@@ -47,7 +47,10 @@ func Verify(token, secret string) (*protocol.RuntimeTokenClaims, error) {
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return nil, ErrMalformed
 	}
-	if claims.Exp > 0 && time.Now().Unix() > claims.Exp {
+	if claims.WorkspaceID == "" || claims.ProjectID == "" || claims.ComputerID == "" || claims.UserID == "" || claims.Exp <= 0 {
+		return nil, ErrMalformed
+	}
+	if time.Now().Unix() > claims.Exp {
 		return nil, ErrExpired
 	}
 	return &claims, nil

@@ -67,3 +67,17 @@ func TestVerifyRejectsMalformed(t *testing.T) {
 		t.Fatalf("expected ErrMalformed, got %v", err)
 	}
 }
+
+func TestVerifyRejectsMissingIdentityOrExpiry(t *testing.T) {
+	for _, mutate := range []func(*protocol.RuntimeTokenClaims){
+		func(c *protocol.RuntimeTokenClaims) { c.WorkspaceID = "" },
+		func(c *protocol.RuntimeTokenClaims) { c.Exp = 0 },
+		func(c *protocol.RuntimeTokenClaims) { c.Exp = -1 },
+	} {
+		c := validClaims()
+		mutate(&c)
+		if _, err := Verify(mint(c), secret); err != ErrMalformed {
+			t.Fatalf("expected ErrMalformed, got %v", err)
+		}
+	}
+}

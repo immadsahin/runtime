@@ -48,9 +48,21 @@ Phased execution (Option A — transport-first):
 - ✅ Phase 1 — PTY transport spike proven on a live Daytona box (writer election verified; wire + agent PTY path frozen — see [`spike-m3-report.md`](./spike-m3-report.md))
 - ✅ Phase 2 — Conversation `/events` SSE + seq resume + virtualized Timeline (event log frozen — see [`spike-m3-report.md`](./spike-m3-report.md))
 - ✅ Phase 3 — Workspace Summary endpoint (frozen `WorkspaceSummary` shape shared with M4 — [`spike-m3-report.md`](./spike-m3-report.md))
-- ⬜ Phase 4 — Lazy provisioning `ensureRuntimeComputer` (unique constraint + advisory lock)
-- ⬜ Phase 5 — Assemble the Workspace Experience (four projections around one Session) — **API freeze after this phase**
-- ⬜ Phase 6 — Acceptance test on real Daytona + `spike-m3-report.md`
+- ✅ Phase 4 — Lazy provisioning `ensureRuntimeComputer` (unique constraint + advisory lock)
+- ✅ Phase 5 — Assemble the Workspace Experience (four projections around one Session) — **API freeze after this phase**
+  - One shared Daytona Runtime Computer is claimed/provisioned per project; a
+    fresh workspace fetches the mirror, creates an isolated worktree, starts
+    Claude, and persists its linkage.
+  - The Workspace Session renders independent terminal and structured
+    conversation projections, current writer/read-only role, reconnect state,
+    exit state, changes, and publishing controls.
+  - The agent strips control-plane variables from the Claude environment,
+    redacts session credentials from PTY frames (including cross-read values),
+    and binds every control request to its token's workspace.
+- 🟡 Phase 6 — Acceptance test on real Daytona + `spike-m3-report.md`
+  - Local/unit verification is complete, but the current sandbox has no
+    `DAYTONA_API_KEY`; a provisioned Runtime Computer and authenticated
+    browser session remain required for full acceptance evidence.
 - ⬜ Phase 7 — Dogfood: an uninterrupted work session in Runtime without opening Conductor
 
 ## Milestone 4 — Archive / Replay / Resume — ⬜ NOT STARTED
@@ -70,5 +82,7 @@ close laptop → Claude keeps running → reconnect from another device → resu
 - ✅ Applied `20260804110000_runtime_computers.sql` + `20260805000000_runtime_computer_provision_timings.sql` to Supabase
   (`database.types.ts` hand-maintained in lockstep)
 - ⬜ Rotate the `CLAUDE_CODE_OAUTH_TOKEN` shared earlier (treat as exposed)
+- ⬜ Provision/configure Daytona credentials in the deployment secret manager,
+  then complete the authenticated Phase 6 acceptance checklist.
 - ⬜ Review/merge PR #9
 - Known limitations (from Spike 4): interactive-TUI PTY input handling; heavy-workload/>30-min profiling; per-turn JSONL flush confirmation

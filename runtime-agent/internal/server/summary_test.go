@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"runtime-agent/internal/protocol"
 )
@@ -83,5 +84,28 @@ func TestSummaryReturnsCanonicalShape(t *testing.T) {
 	}
 	if summary.LastAssistantMessage != nil {
 		t.Fatalf("lastAssistantMessage should be nil, got %v", *summary.LastAssistantMessage)
+	}
+}
+
+func TestSummaryRejectsTokenForAnotherWorkspace(t *testing.T) {
+	f := newServerFixture(t)
+	defer f.stop()
+
+	claims := protocol.RuntimeTokenClaims{
+		WorkspaceID: "other-workspace", ProjectID: "p", ComputerID: "c", UserID: "u",
+		Exp: time.Now().Add(time.Minute).Unix(),
+	}
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/workspaces/%s/summary", f.url, f.workspaceID), nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+mintToken(claims, f.secret))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("perform request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
 }

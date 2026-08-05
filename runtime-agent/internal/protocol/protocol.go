@@ -24,6 +24,22 @@ type PtyClientMessage struct {
 	Rows int    `json:"rows,omitempty"`
 }
 
+// Valid enforces the frozen client-frame contract after JSON decoding. It is
+// deliberately here (rather than in the WebSocket handler) so any future
+// transport shares the same bounds.
+func (m PtyClientMessage) Valid() bool {
+	switch m.T {
+	case "input":
+		return true
+	case "resize":
+		return m.Cols > 0 && m.Cols <= 65535 && m.Rows > 0 && m.Rows <= 65535
+	case "ping":
+		return true
+	default:
+		return false
+	}
+}
+
 // PtyServerMessage is a frame from the agent on WS /pty.
 // t ∈ {output, role, exit, pong}.
 type PtyServerMessage struct {
@@ -58,8 +74,8 @@ type ErrorResponse struct {
 // SessionUrls is the browser's handle to one Workspace Session, returned by
 // POST /api/workspaces/[id]/session. Each URL already carries the 5-min token.
 type SessionUrls struct {
-	PtyUrl    string           `json:"ptyUrl"`
-	EventsUrl string           `json:"eventsUrl,omitempty"`
+	PtyUrl    string            `json:"ptyUrl"`
+	EventsUrl string            `json:"eventsUrl,omitempty"`
 	Summary   *WorkspaceSummary `json:"summary,omitempty"`
 }
 
@@ -68,16 +84,16 @@ type SessionUrls struct {
 // M3 owns this type; other packages import it. See docs/architecture/m4-plan.md
 // and docs/architecture/session-contract.md.
 type WorkspaceSummary struct {
-	State                string             `json:"state"`
-	StartedAt            string             `json:"startedAt"`
-	EndedAt              *string            `json:"endedAt"`
-	Duration             int64              `json:"duration"` // seconds
-	LastActivity         string             `json:"lastActivity"`
-	TokenUsage           TokenUsageAmounts  `json:"tokenUsage"`
-	ChangedFiles         int                `json:"changedFiles"`
-	FilesTouched         []string           `json:"filesTouched"`
-	CommitCount          int                `json:"commitCount"`
-	LastAssistantMessage *string            `json:"lastAssistantMessage"`
+	State                string            `json:"state"`
+	StartedAt            string            `json:"startedAt"`
+	EndedAt              *string           `json:"endedAt"`
+	Duration             int64             `json:"duration"` // seconds
+	LastActivity         string            `json:"lastActivity"`
+	TokenUsage           TokenUsageAmounts `json:"tokenUsage"`
+	ChangedFiles         int               `json:"changedFiles"`
+	FilesTouched         []string          `json:"filesTouched"`
+	CommitCount          int               `json:"commitCount"`
+	LastAssistantMessage *string           `json:"lastAssistantMessage"`
 }
 
 // TokenUsageAmounts is the numbers-only projection embedded in WorkspaceSummary.

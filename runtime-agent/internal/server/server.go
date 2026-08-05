@@ -5,6 +5,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -29,7 +30,8 @@ const (
 	coalesceInterval  = 16 * time.Millisecond
 	coalesceThreshold = 4096
 	// SSE keeps proxies from idling out an in-flight but quiet stream.
-	sseHeartbeat = 20 * time.Second
+	sseHeartbeat      = 20 * time.Second
+	maxWSMessageBytes = 64 * 1024
 )
 
 type Server struct {
@@ -38,6 +40,8 @@ type Server struct {
 	upgrader websocket.Upgrader
 	broker   *ptyx.Broker
 }
+
+type claimsContextKey struct{}
 
 func New(secret string, ws *workspace.Service) *Server {
 	return &Server{
@@ -58,7 +62,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces", s.authed(s.createWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/start", s.authed(s.startWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/stop", s.authed(s.stopWorkspace))
+	mux.HandleFunc("POST /workspaces/{id}/resume", s.authed(s.resumeWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/archive", s.authed(s.archiveWorkspace))
+	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /workspaces/{id}/summary", s.authed(s.workspaceSummary))
@@ -73,17 +79,21 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) authed(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := bearer(r)
-		if _, err := auth.Verify(token, s.secret); err != nil {
+		claims, err := auth.Verify(token, s.secret)
+		if err != nil {
 			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
 			return
 		}
-		next(w, r)
+		next(w, r.WithContext(context.WithValue(r.Context(), claimsContextKey{}, claims)))
 	}
 }
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	var req protocol.CreateWorkspaceRequest
 	if !decode(w, r, &req) {
+		return
+	}
+	if !s.requireWorkspace(w, r, req.WorkspaceID) {
 		return
 	}
 	worktree, err := s.ws.Create(r.Context(), req.WorkspaceID, req.Branch, "origin/"+req.BaseBranch)
@@ -95,6 +105,9 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startWorkspace(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
 	// The Anthropic token is supplied out-of-band by the control plane at
 	// provision time and held in agent memory (M2 wiring); empty here.
 	name, err := s.ws.Start(r.Context(), r.PathValue("id"), "")
@@ -102,21 +115,58 @@ func (s *Server) startWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) stopWorkspace(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
 	err := s.ws.Stop(r.Context(), r.PathValue("id"))
 	respond(w, "stopped", err)
 }
 
+func (s *Server) resumeWorkspace(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	name, err := s.ws.Resume(r.Context(), r.PathValue("id"), "")
+	respond(w, name, err)
+}
+
 func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
 	err := s.ws.Archive(r.Context(), r.PathValue("id"))
 	respond(w, "archived", err)
+}
+
+func (s *Server) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	err := s.ws.Destroy(r.Context(), r.PathValue("id"))
+	respond(w, "destroyed", err)
 }
 
 // workspaceSummary serves the current WorkspaceSummary — the canonical, cross-
 // milestone summary Mission Engine consumes. Cheap enough for polling; git
 // stats are shelled out at request time (typical <20ms on a healthy worktree).
 func (s *Server) workspaceSummary(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
 	summary := s.ws.SummaryOf(r.Context(), r.PathValue("id"))
 	writeJSON(w, http.StatusOK, summary)
+}
+
+// requireWorkspace binds a verified Runtime token to the exact workspace a
+// control request addresses. A token for one workspace must never be usable to
+// stop, archive, destroy, or inspect another workspace on the same computer.
+func (s *Server) requireWorkspace(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
+	claims, _ := r.Context().Value(claimsContextKey{}).(*protocol.RuntimeTokenClaims)
+	if claims == nil || workspaceID == "" || claims.WorkspaceID != workspaceID {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Runtime token does not authorize this workspace")
+		return false
+	}
+	return true
 }
 
 // pty bridges the browser WebSocket to the workspace's tmux PTY. Every attach
@@ -133,6 +183,7 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(maxWSMessageBytes)
 
 	sess, err := ptyx.Attach(s.ws.SessionName(claims.WorkspaceID))
 	if err != nil {
@@ -162,12 +213,23 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 
 	// Output pipeline: PTY → coalescer → WS. Coalescing satisfies the frozen
 	// contract ("output is coalesced") and prevents one-keystroke-per-frame
-	// flooding. Redaction is a no-op until session env plumbing lands (Phase 5).
+	// flooding. The redactor preserves a suffix between calls so no secret can
+	// leak when it crosses a PTY read boundary.
+	redactor := NewRedactor(append(s.ws.RedactionSecrets(), s.secret))
 	coalescer := ptyx.NewCoalescer(coalesceInterval, coalesceThreshold, func(seq int, data []byte) error {
-		return writeFrame(protocol.PtyServerMessage{T: "output", Data: string(redact(data)), Seq: seq})
+		output := redactor.Redact(data)
+		if output == "" {
+			return nil
+		}
+		return writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: seq})
 	})
 	go coalescer.Run()
-	defer coalescer.Stop()
+	defer func() {
+		coalescer.Stop()
+		if output := redactor.Flush(); output != "" {
+			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output})
+		}
+	}()
 
 	go pumpOut(sess, coalescer, writeFrame)
 	pumpIn(conn, sess, attachment.IsWriter, writeFrame)
@@ -199,7 +261,7 @@ func pumpIn(conn *websocket.Conn, sess *ptyx.Session, isWriter func() bool, send
 			return
 		}
 		var m protocol.PtyClientMessage
-		if json.Unmarshal(data, &m) != nil {
+		if json.Unmarshal(data, &m) != nil || !m.Valid() {
 			continue
 		}
 		switch m.T {
@@ -214,12 +276,6 @@ func pumpIn(conn *websocket.Conn, sess *ptyx.Session, isWriter func() bool, send
 		}
 	}
 }
-
-// redact wipes known secrets from PTY output before it crosses the wire. The
-// frozen protocol claims output is redacted; secret plumbing lands with the
-// session-env work in Phase 5, at which point this becomes non-trivial. The
-// call site is intentionally in place today so the contract isn't a lie.
-func redact(b []byte) []byte { return b }
 
 // events serves the Conversation event stream as SSE.
 //
