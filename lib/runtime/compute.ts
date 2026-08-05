@@ -1,38 +1,17 @@
 /**
  * Workspace compute service.
  *
- * Two responsibilities that both the job and (future) terminal routes need, kept
- * out of the route handlers so they can be unit-tested in isolation:
- *
- *   - {@link settleRunningJobs}  reconcile jobs that finished while no browser
- *     was streaming their logs (durability: "work continues if you close the app").
- *   - {@link ensureLiveSandbox}  guarantee live compute before running work,
- *     transparently resuming a suspended/expired workspace.
- *
- * Everything is dependency-injected (no direct DB or provider imports) so tests
- * can drive every branch with in-memory fakes.
+ * {@link ensureLiveSandbox} guarantees live compute before running work,
+ * transparently resuming a suspended/expired workspace. Kept out of the route
+ * handlers, and dependency-injected (no direct DB or provider imports), so every
+ * branch can be driven from tests with in-memory fakes. The interactive session
+ * routes reuse it (Phase 0 decision).
  */
 import type {
-  Job,
-  JobResult,
-  JobStatus,
   RuntimeProvider,
   Workspace,
   WorkspaceStatus,
 } from "@/lib/runtime/types";
-
-type TransitionJob = (input: {
-  id: string;
-  from: JobStatus[];
-  patch: {
-    status: JobStatus;
-    exitCode?: number | null;
-    finishedAt?: string | null;
-    logBytes?: number;
-    sessionId?: string | null;
-    costUsd?: number | null;
-  };
-}) => Promise<Job | null>;
 
 type TransitionWorkspace = (input: {
   id: string;
@@ -48,72 +27,6 @@ type TransitionWorkspace = (input: {
 type ProviderResolution =
   | { ok: true; provider: RuntimeProvider }
   | { ok: false; status: 503 | 409; message: string };
-
-// ---------------------------------------------------------------------------
-// Reconcile running jobs (Architecture 1A)
-// ---------------------------------------------------------------------------
-
-export type SettleDeps = {
-  listJobs: (workspaceId: string) => Promise<Job[]>;
-  getJobResult: (input: {
-    workspaceId: string;
-    sandboxId: string;
-    jobId: string;
-    resultPath: string;
-  }) => Promise<JobResult | null>;
-  transitionJob: TransitionJob;
-};
-
-/**
- * Settle any queued/running job whose provider result record already exists.
- *
- * Idempotent and concurrency-safe: `transitionJob` only moves a job that is
- * still queued/running, so a concurrent reader — or a live SSE stream doing the
- * same reconciliation — can never double-write or clobber a terminal state.
- * Provider read failures are swallowed so the workspace page still renders; the
- * job simply settles on a later read.
- */
-export async function settleRunningJobs(
-  workspace: Pick<Workspace, "id" | "sandboxId">,
-  deps: SettleDeps,
-): Promise<void> {
-  const jobs = await deps.listJobs(workspace.id);
-  const active = jobs.filter(
-    (job) => job.status === "queued" || job.status === "running",
-  );
-  if (active.length === 0) return;
-
-  const sandboxId = workspace.sandboxId ?? "";
-  await Promise.all(
-    active.map(async (job) => {
-      if (!job.resultPath) return;
-      let result: JobResult | null;
-      try {
-        result = await deps.getJobResult({
-          workspaceId: workspace.id,
-          sandboxId,
-          jobId: job.id,
-          resultPath: job.resultPath,
-        });
-      } catch {
-        return; // provider unreachable / invalid path: settle on a later read
-      }
-      if (!result) return;
-      await deps.transitionJob({
-        id: job.id,
-        from: ["queued", "running"],
-        patch: {
-          status: result.status,
-          exitCode: result.exitCode,
-          finishedAt: result.finishedAt,
-          logBytes: job.logBytes,
-          ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
-          ...(result.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
-        },
-      });
-    }),
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Ensure live sandbox (Architecture 2A)

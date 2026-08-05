@@ -20,10 +20,6 @@ import type {
   CommitWorkspaceResult,
   CreatePullRequestResult,
   CreateWorkspaceResult,
-  ExecuteJobResult,
-  JobPaths,
-  JobResult,
-  LogChunk,
   ProvisionStage,
   ProvisionTimings,
   RuntimeProvider,
@@ -299,9 +295,9 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
 
   // --- RuntimeProvider interface --------------------------------------------
   // Workspace/session operations run through AgentClient (wired at the route
-  // layer), not the provider; the batch/SSE path is retired in M2 pt3. These
-  // implementations intentionally take no arguments — a narrower signature still
-  // satisfies the interface — because every one throws.
+  // layer), not the provider. These implementations intentionally take no
+  // arguments — a narrower signature still satisfies the interface — because
+  // every one throws.
 
   createWorkspace(): Promise<CreateWorkspaceResult> {
     return notWiredYet("createWorkspace");
@@ -313,22 +309,6 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
 
   sandboxAlive(): Promise<boolean> {
     return notWiredYet("sandboxAlive");
-  }
-
-  executeJob(): Promise<ExecuteJobResult> {
-    return retiredBatch();
-  }
-
-  getJobPaths(): JobPaths {
-    throw retiredBatchError();
-  }
-
-  getJobResult(): Promise<JobResult | null> {
-    return retiredBatch();
-  }
-
-  streamLogs(): AsyncIterable<LogChunk> {
-    throw retiredBatchError();
   }
 
   listChangedFiles(): Promise<ChangedFile[]> {
@@ -358,16 +338,6 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
   createPullRequest(): Promise<CreatePullRequestResult> {
     return notWiredYet("createPullRequest");
   }
-}
-
-function retiredBatchError(): Error {
-  return new Error(
-    "Batch execution has been retired. Interactive workspaces are the only supported execution model.",
-  );
-}
-
-function retiredBatch(): Promise<never> {
-  return Promise.reject(retiredBatchError());
 }
 
 function notWiredYet(op: string): Promise<never> {

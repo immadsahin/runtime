@@ -5,7 +5,6 @@ import { toRuntimeComputer } from "@/lib/db/mappers";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import type { RuntimeProvider } from "@/lib/runtime/types";
 
-const RETIRED = /Batch execution has been retired/;
 const NOT_WIRED = /not on the Daytona provider/;
 
 test("provider identifies as the daytona backend without credentials", () => {
@@ -16,31 +15,6 @@ test("provider identifies as the daytona backend without credentials", () => {
 
 // Exercise the methods through the RuntimeProvider interface — the shape callers
 // actually invoke — even though the implementations ignore their arguments.
-test("retired batch methods reject/throw with the retirement message", async () => {
-  const p: RuntimeProvider = new DaytonaRuntimeProvider();
-  await assert.rejects(
-    p.executeJob({
-      workspaceId: "w",
-      sandboxId: "s",
-      jobId: "j",
-      agent: "claude",
-      prompt: "hi",
-      env: {},
-    }),
-    RETIRED,
-  );
-  await assert.rejects(
-    p.getJobResult({ workspaceId: "w", sandboxId: "s", jobId: "j", resultPath: "r" }),
-    RETIRED,
-  );
-  // Synchronous surfaces throw rather than return a rejected promise.
-  assert.throws(() => p.getJobPaths({ workspaceId: "w", jobId: "j" }), RETIRED);
-  assert.throws(
-    () => p.streamLogs({ workspaceId: "w", sandboxId: "s", jobId: "j", logPath: "l" }),
-    RETIRED,
-  );
-});
-
 test("unwired workspace methods reject pointing at the AgentClient path", async () => {
   const p: RuntimeProvider = new DaytonaRuntimeProvider();
   await assert.rejects(
