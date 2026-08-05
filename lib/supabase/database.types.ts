@@ -106,6 +106,7 @@ type RuntimeComputerRow = {
   daytona_sandbox_id: string | null;
   agent_base_url: string | null;
   agent_secret: string | null;
+  provision_timings: Json | null;
   error_message: string | null;
   last_active_at: string | null;
   created_at: string;

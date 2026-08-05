@@ -150,15 +150,34 @@ export async function cloneRepo(
   );
 }
 
-/** Bare mirror for the shared Runtime Computer layout (repo.git + worktrees). */
+/**
+ * Bare mirror for the shared Runtime Computer layout (repo.git + worktrees).
+ *
+ * The remote's branches are kept in `refs/remotes/origin/*`, NOT local heads,
+ * so a worktree can branch off `origin/<base>` and the only local `refs/heads`
+ * are the per-workspace branches. `git clone --bare` puts branches directly in
+ * `refs/heads` with no `origin/*`, which the agent's `worktree add … origin/<base>`
+ * cannot resolve ("invalid reference") — so we init an empty bare repo, add the
+ * remote (which sets the standard `+refs/heads/*:refs/remotes/origin/*` refspec
+ * that `fetchMirror` then reuses), and fetch.
+ */
 export async function cloneMirror(
   exec: GitExec,
   input: { repoFullName: string; dir: string; token?: string },
 ): Promise<void> {
   const remote = remoteUrl(input.repoFullName);
+  await git(exec, ["init", "--bare", input.dir]);
+  await git(exec, ["-C", input.dir, "remote", "add", "origin", remote]);
   await git(
     exec,
-    [...AUTH_CONFIG, "clone", "--bare", remote, input.dir],
+    [
+      "-C",
+      input.dir,
+      ...AUTH_CONFIG,
+      "fetch",
+      "origin",
+      "+refs/heads/*:refs/remotes/origin/*",
+    ],
     authOptions(input.token),
   );
 }

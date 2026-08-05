@@ -21,16 +21,21 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started
 - ✅ pt3 · Frozen `agent-protocol.ts` (zod) + golden fixtures (TS + Go drift guard)
 - ✅ pt4 · `runtime-agent/` Go skeleton (auth/tmux/claude/conversation/ptyx/workspace/server)
 
-## Milestone 2 — Replace the execution path — 🟡 IN PROGRESS (~⅓)
+## Milestone 2 — Replace the execution path — 🟡 IN PROGRESS (~⅔)
 - ✅ pt1 · Runtime tokens + typed `AgentClient` (cross-language auth verified)
-- ⬜ pt2 · `DaytonaRuntimeProvider` + lazy provisioning + agent deploy
-  - ⬜ Decide agent-deploy story (bake into image vs upload-on-provision)
-  - ⬜ Provisioning spike: build linux binary → upload → boot → `/health` via preview URL
-  - ⬜ Provision/resume/destroy against Daytona; bare mirror via shared git module
-  - ⬜ Wire `env.ts` `providerName()` + resolution to add `'daytona'`
-  - ⬜ Interactive session start via `AgentClient`
-  - ⬜ Verify create → start → live PTY on a real box before commit
-- ⬜ pt3 · Retire the SSE batch path (delete `executeJob`/`streamLogs`/SSE route; rewire reconciliation)
+- ✅ pt2 · `DaytonaRuntimeProvider` + provisioning + agent deploy — verified on a
+  real box (report: [`spike-m2pt2-report.md`](./spike-m2pt2-report.md))
+  - ✅ Agent-deploy decision: **1A + gzip** (upload-on-provision; 6.42→2.69 MB, 2.4×)
+  - ✅ Provisioning spike: build linux binary → gzip upload → boot → `/health` (15.5 s total)
+  - ✅ Provision/destroy against Daytona; bare mirror via shared git module (remote-tracking refs)
+  - ✅ Wire `env.ts` `providerName()` + resolution to add `'daytona'`
+  - ✅ Interactive session start via `AgentClient` (create worktree → tmux → live WS PTY)
+  - ✅ Verified create → start → live PTY on a real box (auto-destroy, no orphans)
+  - ✅ Provisioning instrumentation (`ProvisionTimer` → `runtime_computers.provision_timings`)
+  - ✅ `runtime_computers` repository (first-class CRUD)
+  - 🟡 Deferred to pt3/M3: DB-orchestrated lazy `ensureRuntimeComputer` (needs auth session)
+- ⬜ pt3 · Retire the SSE batch path (delete `executeJob`/`streamLogs`/SSE route; rewire reconciliation);
+  move git/session ops off the `RuntimeProvider` interface
 
 ## Milestone 3 — UI — ⬜ NOT STARTED
 - ⬜ Workspace page layout
@@ -53,7 +58,8 @@ close laptop → Claude keeps running → reconnect from another device → resu
 **Lands at the end of M3** (M4 completes archive/restore).
 
 ## Housekeeping / follow-ups
-- ⬜ Apply migration `20260804110000_runtime_computers.sql` to Supabase; regenerate `database.types.ts` from the live DB
+- ✅ Applied `20260804110000_runtime_computers.sql` + `20260805000000_runtime_computer_provision_timings.sql` to Supabase
+  (`database.types.ts` hand-maintained in lockstep)
 - ⬜ Rotate the `CLAUDE_CODE_OAUTH_TOKEN` shared earlier (treat as exposed)
 - ⬜ Review/merge PR #9
 - Known limitations (from Spike 4): interactive-TUI PTY input handling; heavy-workload/>30-min profiling; per-turn JSONL flush confirmation

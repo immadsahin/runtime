@@ -6,6 +6,8 @@
  * rather than at import time (so `next build` works without secrets).
  */
 
+import type { ProviderName } from "@/lib/runtime/types";
+
 type EnvKey =
   // Supabase
   | "NEXT_PUBLIC_SUPABASE_URL"
@@ -22,6 +24,13 @@ type EnvKey =
   | "MODAL_TOKEN_ID"
   | "MODAL_TOKEN_SECRET"
   | "MODAL_APP_NAME"
+  // Daytona (Runtime Computer backend)
+  | "DAYTONA_API_KEY"
+  | "DAYTONA_API_URL"
+  | "DAYTONA_TARGET"
+  | "DAYTONA_SNAPSHOT"
+  // Cross-compiled runtime-agent binary uploaded on provision (decision 1A).
+  | "RUNTIME_AGENT_BINARY_PATH"
   // Claude Code
   | "ANTHROPIC_API_KEY"
   | "CLAUDE_CODE_OAUTH_TOKEN"
@@ -47,10 +56,12 @@ export function requireEnv(key: EnvKey): string {
 }
 
 /** Which RuntimeProvider implementation to use. */
-export function providerName(): "local" | "modal" {
+export function providerName(): ProviderName {
   const provider = optionalEnv("RUNTIME_PROVIDER") ?? "local";
-  if (provider === "local" || provider === "modal") return provider;
+  if (provider === "local" || provider === "modal" || provider === "daytona") {
+    return provider;
+  }
   throw new Error(
-    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local" or "modal".`,
+    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", or "daytona".`,
   );
 }

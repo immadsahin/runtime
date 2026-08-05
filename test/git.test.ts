@@ -63,15 +63,27 @@ test("pushBranch injects the token via env (never argv) and disables hooks", asy
   assert.ok(!push.argv.some((a) => a.includes("ghs_secret")));
 });
 
-test("cloneMirror clones bare with auth env; fetchMirror prunes", async () => {
+test("cloneMirror inits a bare mirror with remote-tracking refs; fetchMirror prunes", async () => {
   const clone = recorder();
   await cloneMirror(clone.exec, {
     repoFullName: "acme/app",
     dir: "/r/repo.git",
     token: "t",
   });
-  assert.ok(clone.calls[0].argv.includes("--bare"));
-  assert.equal(clone.calls[0].options?.env?.RUNTIME_GIT_TOKEN, "t");
+  // init empty bare -> add remote -> fetch into refs/remotes/origin/* (so the
+  // agent can branch worktrees off origin/<base>).
+  assert.deepEqual(clone.calls[0].argv, ["git", "init", "--bare", "/r/repo.git"]);
+  assert.deepEqual(clone.calls[1].argv.slice(3), [
+    "remote",
+    "add",
+    "origin",
+    "https://github.com/acme/app.git",
+  ]);
+  const fetchCall = clone.calls[2];
+  assert.ok(fetchCall.argv.includes("+refs/heads/*:refs/remotes/origin/*"));
+  // Only the network fetch carries the credential token.
+  assert.equal(fetchCall.options?.env?.RUNTIME_GIT_TOKEN, "t");
+  assert.equal(clone.calls[0].options?.env?.RUNTIME_GIT_TOKEN, undefined);
 
   const fetch = recorder();
   await fetchMirror(fetch.exec, { repoDir: "/r/repo.git", token: "t" });
