@@ -200,6 +200,14 @@ func (s *Service) Stop(ctx context.Context, workspaceID string) error {
 // SessionName exposes the tmux session name the PTY handler attaches to.
 func (s *Service) SessionName(workspaceID string) string { return sessionName(workspaceID) }
 
+// SessionAlive reports whether the workspace's tmux session (and therefore its
+// Claude process) is still running. The PTY handler uses this to tell a client
+// *detach* (the tmux attach client EOFs, but Claude keeps running) apart from a
+// real process *exit* — only the latter should surface as an exit to the UI.
+func (s *Service) SessionAlive(ctx context.Context, workspaceID string) bool {
+	return s.tmux.HasSession(ctx, sessionName(workspaceID))
+}
+
 // Archive stops the session; uploading the PTY cast + JSONL to object storage
 // and removing the worktree is wired in Milestone 4.
 func (s *Service) Archive(ctx context.Context, workspaceID string) error {
