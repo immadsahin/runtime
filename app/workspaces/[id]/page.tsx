@@ -3,8 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { getProject, getWorkspace, getWorkspacePullRequest, listJobs, listWorkspaces } from "@/lib/db/repositories";
-import { reconcileWorkspaceJobs } from "@/lib/runtime/compute.deps";
+import { getProject, getWorkspace, getWorkspacePullRequest, listWorkspaces } from "@/lib/db/repositories";
 
 export const dynamic = "force-dynamic";
 
@@ -20,12 +19,7 @@ export default async function WorkspacePage({
   if (!workspace) notFound();
   const project = await getProject(workspace.projectId);
   if (!project) notFound();
-  // Settle any jobs that finished while this page was closed, then read fresh
-  // rows — durability: job status settles whenever the owner views the page,
-  // with no live SSE stream required. Best-effort; never blocks the render.
-  await reconcileWorkspaceJobs(workspace).catch(() => {});
-  const [jobs, pullRequest, workspaces] = await Promise.all([
-    listJobs(workspace.id),
+  const [pullRequest, workspaces] = await Promise.all([
     getWorkspacePullRequest(workspace.id),
     listWorkspaces(project.id),
   ]);
@@ -36,7 +30,6 @@ export default async function WorkspacePage({
         project={project}
         workspace={workspace}
         workspaces={workspaces}
-        jobs={jobs}
         pullRequest={pullRequest}
       />
     </AppShell>
