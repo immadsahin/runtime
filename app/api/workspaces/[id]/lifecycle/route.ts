@@ -155,6 +155,11 @@ async function suspendWorkspace(workspace: Workspace, provider: RuntimeProvider)
       { status: 409 },
     );
   }
+  // Interactive Runtime no longer derives lifecycle state from the jobs table:
+  // the runtime-agent (tmux + Claude session) is the source of truth for active
+  // execution, so suspend/destroy decide on the Runtime Computer's live session.
+  // Legacy batch job rows are intentionally ignored — do NOT reintroduce a
+  // jobs-table guard (e.g. hasActiveJob) here.
   const transitioned = await startTransition(workspace, ["ready", "idle"], "suspending");
   if (!transitioned) return lifecycleConflict();
 
@@ -194,6 +199,8 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
       { status: 409 },
     );
   }
+  // Legacy batch job rows are intentionally ignored here too — runtime-agent, not
+  // the jobs table, owns active-execution state (see suspendWorkspace).
   const transitioned = await startTransition(workspace, destroyable, "destroying");
   if (!transitioned) return lifecycleConflict();
 
