@@ -65,11 +65,29 @@ Phased execution (Option A — transport-first):
     browser session remain required for full acceptance evidence.
 - ⬜ Phase 7 — Dogfood: an uninterrupted work session in Runtime without opening Conductor
 
-## Milestone 4 — Archive / Replay / Resume — ⬜ NOT STARTED
-- ⬜ PTY cast capture + upload to object storage (Supabase Storage)
-- ⬜ Archive (kill tmux, upload artifacts, mark read-only)
-- ⬜ Resume (replay cast + `claude --continue`)
-- ⬜ Conversation + terminal replay from stored artifacts
+## Milestone 4 — Archive / Replay / Restore — 🟡 IN PROGRESS
+Foundations landed (cast recorder, storage plumbing, snapshot schema + table).
+Flows built as vertical slices on top: Slice 1 (Archive) → Slice 2 (Replay) →
+Slice 3 (Restore). See [`m4-plan.md`](./m4-plan.md), [`m4-foundations-handoff.md`](./m4-foundations-handoff.md).
+- ✅ Foundations — PTY cast recorder (asciinema v2), Supabase Storage signed-URL
+  helpers, manifest zod schema + `workspace_snapshots` table (+ bucket).
+- ✅ **Slice 1 — Archive → Snapshot (produce).** State machine
+  (`archiving`/`archived`/`restoring`); cast recorder wired into Start/Resume/Stop;
+  agent `snapshot` package (git bundle + uncommitted patch, conversation, summary,
+  sha256 checksums/sizes, manifest assembly, signed-URL upload — manifest last);
+  `Service.Archive` produces + returns the manifest; lifecycle `archive` action
+  mints URLs, drives the agent, caches the `workspace_snapshots` row, marks
+  `archived`. Worktree intentionally KEPT (Restore reclaims it in Slice 3).
+  Verified: `go test ./...` + `pnpm check` green; real-box acceptance deferred
+  (no `DAYTONA_API_KEY`, like M3 Phase 6).
+- ⬜ Slice 2 — Replay (browser + storage only): read manifest → play cast, render
+  Timeline, show diff. No Runtime Computer.
+- ⬜ Slice 3 — Restore (`restoring`): ensure box → materialize tree (bundle + patch,
+  incl. untracked-file capture) → verify → `claude --continue` → `ready`; reclaim
+  worktree/tmux on archive.
+- Follow-ups: capture untracked files in the patch (Slice 3 needs exact WIP);
+  reclaim `casts/<id>` + worktree on archive/destroy; verify the exact Supabase
+  signed-upload wire format on a real box.
 
 ---
 
