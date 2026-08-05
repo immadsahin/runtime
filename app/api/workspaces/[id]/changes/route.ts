@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getWorkspace } from "@/lib/db/repositories";
+import { getRuntimeComputerByProject, getWorkspace } from "@/lib/db/repositories";
+import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 
 export const dynamic = "force-dynamic";
@@ -31,16 +32,39 @@ export async function GET(request: Request, context: RouteContext) {
       { status: 409 },
     );
   }
-  if (!workspace.sandboxId) {
-    return NextResponse.json(
-      { error: "Resume the workspace to view its changes." },
-      { status: 409 },
-    );
-  }
 
   const path = new URL(request.url).searchParams.get("path");
 
   try {
+    if (provider instanceof DaytonaRuntimeProvider) {
+      const computer = await getRuntimeComputerByProject(workspace.projectId);
+      if (!computer?.daytonaSandboxId || !workspace.worktreePath) {
+        return NextResponse.json(
+          { error: "The interactive worktree is not available yet." },
+          { status: 409 },
+        );
+      }
+      if (path !== null) {
+        const diff = await provider.readWorkspaceChangedFileDiff(
+          computer.daytonaSandboxId,
+          workspace.worktreePath,
+          path,
+        );
+        return NextResponse.json({ diff });
+      }
+      const files = await provider.listWorkspaceChangedFiles(
+        computer.daytonaSandboxId,
+        workspace.worktreePath,
+      );
+      return NextResponse.json({ files });
+    }
+
+    if (!workspace.sandboxId) {
+      return NextResponse.json(
+        { error: "Resume the workspace to view its changes." },
+        { status: 409 },
+      );
+    }
     if (path !== null) {
       const diff = await provider.readChangedFileDiff({
         workspaceId: workspace.id,

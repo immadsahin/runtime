@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { openTerminal } from "@/lib/runtime/session-client";
 
-import { useSessionAttachment } from "./use-session-attachment";
+import type { SessionAttachment } from "./use-session-attachment";
 
 export type SessionTerminalState = {
   status:
@@ -33,15 +33,23 @@ type WsPhase = "idle" | "open" | "closed";
  * invisible to the user.
  */
 export function useSessionTerminal(
-  workspaceId: string,
+  attachment: SessionAttachment,
   containerRef: RefObject<HTMLDivElement | null>,
 ): SessionTerminalState {
-  const attachment = useSessionAttachment(workspaceId);
+  const {
+    urls,
+    status: attachmentStatus,
+    error: attachmentError,
+    attachId,
+    reconnect,
+    refresh,
+  } = attachment;
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const [role, setRole] = useState<SessionTerminalState["role"]>("unknown");
   const [wsError, setWsError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
+  const exitedRef = useRef(false);
   const [wsPhase, setWsPhase] = useState<WsPhase>("idle");
 
   // Own the xterm instance — it survives WS reconnects so local scrollback
@@ -89,43 +97,56 @@ export function useSessionTerminal(
 
   // Reattach the WebSocket whenever fresh URLs arrive. Do NOT rebuild xterm.
   useEffect(() => {
-    const url = attachment.urls?.ptyUrl;
+    const url = urls?.ptyUrl;
     const term = terminalRef.current;
-    if (!url || !term || attachment.status !== "attached") return;
+    if (!url || !term || attachmentStatus !== "attached" || exitedRef.current) return;
 
-    let reattachTimer: ReturnType<typeof setTimeout> | null = null;
+    let active = true;
     setWsError(null);
 
     const handle = openTerminal(url, term, {
       onRole: (writer) => setRole(writer ? "writer" : "reader"),
-      onExit: (code) => setExitCode(code),
+      onExit: (code) => {
+        exitedRef.current = true;
+        setExitCode(code);
+      },
       onClose: () => {
+        if (!active) return;
         setWsPhase("closed");
-        // Refresh URLs + reattach after a short backoff. Skip if the session
-        // already ended cleanly — an exited PTY won't come back on its own.
-        reattachTimer = setTimeout(() => attachment.refresh(), 500);
+        // The shared attachment owns retry coalescing for both projections.
+        // The exit state below prevents a terminated Claude process from
+        // repeatedly reopening a dead PTY.
+        if (!exitedRef.current) reconnect();
       },
       onError: (err) => setWsError(err.message),
     });
     setWsPhase("open");
 
     return () => {
-      if (reattachTimer) clearTimeout(reattachTimer);
+      active = false;
       handle.dispose();
     };
     // attachId changes on every successful refresh -> reattach.
-  }, [attachment.attachId, attachment.status, attachment.urls?.ptyUrl, attachment]);
+  }, [attachId, attachmentStatus, reconnect, urls?.ptyUrl]);
+
+  // The agent is authoritative for writer election. Avoid accepting keystrokes
+  // that it would discard, and make reader mode an actual read-only terminal.
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.disableStdin = role === "reader";
+    }
+  }, [role]);
 
   const status = useMemo<SessionTerminalState["status"]>(() => {
     if (exitCode !== null) return "exited";
-    if (attachment.status === "loading") return "loading";
-    if (attachment.status === "error") return "error";
+    if (attachmentStatus === "loading") return "loading";
+    if (attachmentStatus === "error") return "error";
     if (wsPhase === "open") return "connected";
     if (wsPhase === "closed") return "disconnected";
     return "connecting";
-  }, [attachment.status, wsPhase, exitCode]);
+  }, [attachmentStatus, wsPhase, exitCode]);
 
-  const error = wsError ?? attachment.error;
+  const error = wsError ?? attachmentError;
 
-  return { status, role, error, exitCode, refresh: attachment.refresh };
+  return { status, role, error, exitCode, refresh };
 }

@@ -24,6 +24,10 @@ type Service struct {
 	Root string
 	tmux *tmux.Manager
 	env  []string
+	// secrets are values that can legitimately appear in the Claude process
+	// environment. The HTTP server uses them to redact browser-visible PTY
+	// output. Agent control variables never enter env in the first place.
+	secrets []string
 
 	mu    sync.Mutex
 	facts map[string]workspaceFacts
@@ -44,13 +48,46 @@ type workspaceFacts struct {
 }
 
 func NewService(root string) *Service {
+	env, secrets := sessionEnvironment(os.Environ())
 	return &Service{
 		Root:      root,
 		tmux:      tmux.New(),
-		env:       os.Environ(),
+		env:       env,
+		secrets:   secrets,
 		facts:     map[string]workspaceFacts{},
 		summaries: map[string]*Summary{},
 	}
+}
+
+// sessionEnvironment keeps only the credentials Claude Code itself supports
+// and excludes the Runtime agent's control-plane secret and launch variables.
+// This prevents an interactive shell from reading RUNTIME_AGENT_SECRET via
+// `env`, while keeping non-sensitive OS settings such as PATH and HOME.
+func sessionEnvironment(base []string) ([]string, []string) {
+	env := make([]string, 0, len(base))
+	secrets := make([]string, 0, 2)
+	for _, entry := range base {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT":
+			continue
+		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY":
+			if value != "" {
+				secrets = append(secrets, value)
+			}
+		}
+		env = append(env, entry)
+	}
+	return env, secrets
+}
+
+// RedactionSecrets returns a defensive copy of values that must not be sent to
+// a browser in terminal output.
+func (s *Service) RedactionSecrets() []string {
+	return append([]string(nil), s.secrets...)
 }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
@@ -168,6 +205,44 @@ func (s *Service) SessionName(workspaceID string) string { return sessionName(wo
 func (s *Service) Archive(ctx context.Context, workspaceID string) error {
 	// TODO(M4): finalize + upload cast + JSONL, then mark read-only.
 	return s.Stop(ctx, workspaceID)
+}
+
+// Destroy stops the Claude session and removes its worktree from the shared
+// bare mirror. Unlike Archive, this is terminal: the persisted Workspace row
+// is marked destroyed by the control plane and a future workspace receives a
+// new branch/worktree. The operation is idempotent for a worktree already
+// removed by an earlier request.
+func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
+	_ = s.Stop(ctx, workspaceID)
+	worktree := s.worktreePath(workspaceID)
+	if _, err := os.Stat(worktree); os.IsNotExist(err) {
+		s.forgetWorkspace(workspaceID)
+		return nil
+	}
+	out, err := exec.CommandContext(
+		ctx,
+		"git",
+		"-C",
+		s.mirrorPath(),
+		"worktree",
+		"remove",
+		"--force",
+		worktree,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("worktree remove: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	s.forgetWorkspace(workspaceID)
+	return nil
+}
+
+func (s *Service) forgetWorkspace(workspaceID string) {
+	s.mu.Lock()
+	delete(s.facts, workspaceID)
+	s.mu.Unlock()
+	s.summariesMu.Lock()
+	delete(s.summaries, workspaceID)
+	s.summariesMu.Unlock()
 }
 
 // SessionLog returns the current Claude JSONL path for a workspace, or "" if

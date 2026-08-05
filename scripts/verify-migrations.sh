@@ -48,14 +48,27 @@ fi
 echo "==> recreating $DB"
 run_psql -c "drop database if exists $DB;" -c "create database $DB;"
 
-# Minimal stand-ins for the Supabase-managed auth schema.
-echo "==> stubbing auth schema"
+# Minimal stand-ins for Supabase-managed auth and storage schemas. The storage
+# bucket migration creates a policy on storage.objects, so this local verifier
+# must model that catalog surface rather than failing before our migrations run.
+echo "==> stubbing Supabase auth and storage schemas"
 run_psql -d "$DB" -c "
   create schema if not exists auth;
   create table auth.users (id uuid primary key default gen_random_uuid(), email text);
   create or replace function auth.uid() returns uuid language sql stable as \$\$
     select current_setting('request.jwt.claim.sub', true)::uuid
-  \$\$;"
+  \$\$;
+  create schema if not exists storage;
+  create table storage.buckets (id text primary key, name text not null, public boolean not null default false);
+  create table storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text not null, name text not null);
+  create or replace function storage.foldername(path text) returns text[] language sql immutable as \$\$
+    select string_to_array(path, '/')
+  \$\$;
+  do \$\$ begin
+    if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+      create role authenticated nologin;
+    end if;
+  end \$\$;"
 
 echo "==> applying migrations"
 for f in "$REPO_ROOT"/supabase/migrations/*.sql; do

@@ -93,10 +93,10 @@ func (r *Recorder) Start(ctx context.Context) error {
 		file.Close()
 		return err
 	}
-	// O_RDWR keeps a writer end permanently open, so reads block on data rather
-	// than seeing spurious EOF between pane bursts, and open never blocks.
-	// O_NONBLOCK makes Go register the FIFO with its poller, so SetReadDeadline
-	// works (Read still blocks via the poller until data or deadline).
+	// O_RDWR keeps a writer end permanently open, so reads do not see spurious
+	// EOF between pane bursts, and opening the FIFO never blocks. O_NONBLOCK
+	// lets drain observe idle periods and the stop signal without waiting for a
+	// later pane write.
 	fifo, err := os.OpenFile(fifoPath, os.O_RDWR|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
 		os.Remove(fifoPath)
@@ -130,8 +130,12 @@ func (r *Recorder) Start(ctx context.Context) error {
 func (r *Recorder) drain() {
 	defer r.wg.Done()
 	buf := make([]byte, 32*1024)
+	conn, err := r.fifo.SyscallConn()
+	if err != nil {
+		return
+	}
 	for {
-		n, err := r.fifo.Read(buf)
+		n, err := readNonblocking(conn, buf)
 		if n > 0 {
 			r.consume(buf[:n])
 		}
@@ -147,6 +151,20 @@ func (r *Recorder) drain() {
 			return // EOF (all writers gone) or a genuine read error.
 		}
 	}
+}
+
+// readNonblocking bypasses os.File.Read's poller, which waits for FIFO data
+// after an EAGAIN even when the descriptor was opened O_NONBLOCK. Control
+// keeps the descriptor open for the syscall without changing its mode, unlike
+// File.Fd.
+func readNonblocking(conn syscall.RawConn, buf []byte) (n int, readErr error) {
+	err := conn.Control(func(fd uintptr) {
+		n, readErr = syscall.Read(int(fd), buf)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, readErr
 }
 
 func (r *Recorder) consume(b []byte) {
