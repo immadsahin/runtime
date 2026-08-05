@@ -80,14 +80,25 @@ Slice 3 (Restore). See [`m4-plan.md`](./m4-plan.md), [`m4-foundations-handoff.md
   `archived`. Worktree intentionally KEPT (Restore reclaims it in Slice 3).
   Verified: `go test ./...` + `pnpm check` green; real-box acceptance deferred
   (no `DAYTONA_API_KEY`, like M3 Phase 6).
-- ⬜ Slice 2 — Replay (browser + storage only): read manifest → play cast, render
-  Timeline, show diff. No Runtime Computer.
+- ✅ **Slice 2 — Replay (browser + storage only).** Read-only replay of an
+  archived Session with NO Runtime Computer (invariant #2). Off-box parsers:
+  `lib/runtime/replay/conversation.ts` (JSONL→events, pinned to the Go `decode`
+  by a shared golden fixture asserted from both languages) + `cast.ts`
+  (asciinema v2). A lean xterm cast player (`use-cast-player`, play/pause/seek).
+  `assembleReplay` reads every artifact from storage via signed URLs following
+  the manifest pointers. Routes: `GET …/snapshots`, `GET …/replay`. UI: a
+  read-only Replay page composing cast + reused `ConversationTimeline` + patch/
+  Summary diff; Archive + Replay entry points added to the lifecycle controls
+  (archived workspaces are now destroyable, cascading the Snapshot rows).
+  Verified: `pnpm check` + `go test ./...` green; visual acceptance deferred.
 - ⬜ Slice 3 — Restore (`restoring`): ensure box → materialize tree (bundle + patch,
   incl. untracked-file capture) → verify → `claude --continue` → `ready`; reclaim
   worktree/tmux on archive.
 - Follow-ups: capture untracked files in the patch (Slice 3 needs exact WIP);
-  reclaim `casts/<id>` + worktree on archive/destroy; verify the exact Supabase
-  signed-upload wire format on a real box.
+  reclaim `casts/<id>` + worktree on archive/destroy; delete Snapshot storage
+  objects when an archived workspace is destroyed (FK cascade removes the rows,
+  not the bytes); verify the exact Supabase signed-upload wire format on a real
+  box; render committed diff in Replay (needs the git bundle).
 
 ---
 
