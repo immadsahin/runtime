@@ -3,9 +3,9 @@
  * that hermetic tests cannot prove, none of which need a Claude token:
  *
  *   provision (create + upload/boot agent + health + mirror clone)
- *   → agent reachable through the PUBLIC getHost URL  (proves secure:false: the
- *     E2B edge does NOT 401 unauthenticated agent traffic — the runtime-agent's
- *     Runtime-JWT check is the boundary)
+ *   → agent reachable through the public getHost URL, while E2B controller API
+ *     access remains secured and the runtime-agent rejects requests without a
+ *     Runtime JWT
  *   → real-kernel Docker: dockerd + `docker run hello-world` on the box
  *   → pause → resume  (state survives; connect resumes the same placement)
  *   → destroy  (kill is idempotent terminal cleanup)
@@ -59,16 +59,27 @@ async function main(): Promise<void> {
       return result;
     });
 
-    // BLOCKER-1 FIX: the agent must be reachable through E2B's public edge with
-    // no E2B traffic token. /health is unauthenticated on the agent, so a 200
-    // proves the sandbox was created with secure:false (secure:true would 401
-    // here at the edge before reaching the agent).
-    await step("agent /health reachable through public getHost URL (secure:false)", async () => {
+    // E2B controller security and public sandbox-port traffic are separate
+    // features. /health is intentionally unauthenticated, so a 200 proves the
+    // agent port is reachable without weakening the secured controller API.
+    await step("agent /health reachable through public getHost URL", async () => {
       const res = await fetch(`${provisioned.controlBaseUrl}/health`, {
         signal: AbortSignal.timeout(15_000),
       });
       if (res.status !== 200) {
-        throw new Error(`expected 200 from public /health, got ${res.status} — edge likely still secure`);
+        throw new Error(`expected 200 from public /health, got ${res.status}`);
+      }
+    });
+
+    await step("agent rejects a control request without a Runtime JWT", async () => {
+      const res = await fetch(`${provisioned.controlBaseUrl}/workspaces`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (res.status !== 401) {
+        throw new Error(`expected 401 without a Runtime JWT, got ${res.status}`);
       }
     });
 

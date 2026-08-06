@@ -219,15 +219,11 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
       sandbox = await timer.stage("sandbox_create", () =>
         this.client.create(this.template(), {
           apiKey,
-          // Public agent traffic carries no E2B credential — the runtime-agent
-          // authorizes every request with the short-lived Runtime JWT instead.
-          // E2B's default `secure: true` would make its edge proxy require a
-          // traffic-access-token header on every call to `<port>-<id>.e2b.app`;
-          // browsers cannot set that header on a WS upgrade, so the PTY/SSE (and
-          // all control calls, which only send the Runtime JWT) would be 401'd at
-          // the edge before ever reaching the agent. Disable it and rely on the
-          // agent's own token check.
-          secure: false,
+          // This secures the E2B sandbox controller API. It is independent from
+          // public traffic to the runtime-agent port, which is authorized by
+          // short-lived Runtime JWTs inside the agent. Never disable controller
+          // security merely to make the browser PTY/SSE transport work.
+          secure: true,
           timeoutMs: this.timeoutMs(),
           metadata: { ...input.labels, "runtime.role": "computer", "runtime.topology": "isolated" },
           // A Runtime workspace retains its immutable placement across an E2B

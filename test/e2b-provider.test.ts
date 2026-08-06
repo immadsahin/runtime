@@ -139,10 +139,9 @@ test("E2B provisions agent upload, boot, health, and cleans up a failed provisio
 
     assert.equal(provisioned.computerId, "e2b-1");
     assert.equal(provisioned.controlBaseUrl, "https://agent.e2b.example.test");
-    // Agent traffic is authorized by the Runtime JWT, not an E2B edge token, so
-    // the sandbox must be created with secure disabled (browsers can't attach
-    // E2B's traffic-token header to a WS upgrade).
-    assert.equal(recorded.secure, false);
+    // Keep E2B's controller API secured. This is independent from public agent
+    // traffic, which the runtime-agent authorizes with Runtime JWTs.
+    assert.equal(recorded.secure, true);
     assert.deepEqual(recorded.lifecycle, { onTimeout: { action: "pause", keepMemory: true } });
     assert.deepEqual(recorded.uploads, ["/home/runtime/runtime-agent.gz"]);
     assert.ok(recorded.commands.some(({ background }) => background));
