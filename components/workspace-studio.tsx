@@ -143,7 +143,11 @@ export function WorkspaceStudio({
               <WorkspacePublishPanel workspaceId={workspace.id} branch={workspace.branch} baseBranch={workspace.baseBranch} pullRequest={pullRequest} active={isReady} />
               <div className="studio-compute-actions">
                 <div className="studio-inspector-heading"><div><p>Workspace controls</p><span>Pause or remove this isolated worktree.</span></div></div>
-                <WorkspaceLifecycleControls workspaceId={workspace.id} status={workspace.status} />
+                <WorkspaceLifecycleControls
+                  workspaceId={workspace.id}
+                  status={workspace.status}
+                  provider={workspace.provider}
+                />
               </div>
             </>}
           </div>

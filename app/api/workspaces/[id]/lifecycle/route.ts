@@ -3,10 +3,12 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import {
   createWorkspaceSnapshot,
+  deleteWorkspaceSnapshots,
   getProject,
   getRuntimeComputerByProject,
   getWorkspace,
   listWorkspaceSnapshots,
+  markRuntimeComputerStoppedIfReady,
   readRuntimeComputerSecret,
   transitionWorkspace,
   updateWorkspace,
@@ -245,15 +247,33 @@ async function restoreDaytonaWorkspace(
     const storage = supabaseSnapshotStorage();
     const { manifest, storagePath } = snapshot;
     const downloads = await Promise.all(
-      [
-        { artifact: "bundle", file: manifest.tree.bundle },
-        { artifact: "patch", file: manifest.tree.patch },
-        { artifact: "conversation", file: manifest.conversation },
-      ].map(async ({ artifact, file }) => ({
+      (
+        [
+          { artifact: "bundle", file: manifest.tree.bundle },
+          { artifact: "patch", file: manifest.tree.patch },
+          { artifact: "conversation", file: manifest.conversation },
+        ] as const
+      ).map(async ({ artifact, file }) => ({
         artifact,
         url: await mintSnapshotDownloadUrl(storage, `${storagePath}${file}`, userId),
       })),
     );
+
+    // If the project's persisted box is marked ready but its Daytona sandbox has
+    // vanished, release the stale claim first so ensure provisions a replacement
+    // — otherwise restore would fail instead of rebuilding on a fresh box (the
+    // whole point of portable Restore). Mirrors the create flow.
+    const currentComputer = await getRuntimeComputerByProject(project.id);
+    if (
+      currentComputer?.status === "ready" &&
+      currentComputer.daytonaSandboxId &&
+      !(await provider.computerAlive(currentComputer.daytonaSandboxId))
+    ) {
+      await markRuntimeComputerStoppedIfReady(
+        currentComputer.id,
+        currentComputer.daytonaSandboxId,
+      );
+    }
 
     // Ensure a box (any) and refresh its mirror before the agent branches from
     // the bundle. Matches the create flow's lazy-provision path.
@@ -416,16 +436,24 @@ async function destroyDaytonaWorkspace(
   }
   const transitioned = await startTransition(workspace, destroyable, "destroying");
   if (!transitioned) return lifecycleConflict();
+
+  // Best-effort worktree teardown: destroy is terminal, and the shared box may
+  // already be gone (e.g. destroying an ARCHIVED workspace whose Runtime Computer
+  // was reclaimed). A missing/failed agent must not block the durable cleanup.
   try {
     const { agent, identity } = await daytonaAgent(workspace, provider, userId);
     await agent.destroyWorkspace(identity);
   } catch (error) {
-    console.error(`Workspace ${workspace.id} destroy failed`, error);
-    await restoreAfterFailure(workspace, "destroying", lifecycleError("destroy")).catch(
-      (updateError: unknown) => console.error("Could not persist destroy failure", updateError),
-    );
-    return NextResponse.json({ error: lifecycleError("destroy") }, { status: 502 });
+    console.warn(`Workspace ${workspace.id} agent teardown skipped`, error);
   }
+
+  // Drop the Snapshot index rows: the workspace row is marked destroyed rather
+  // than deleted, so the FK cascade never fires — remove them explicitly so a
+  // destroyed workspace retains no replay metadata.
+  await deleteWorkspaceSnapshots(workspace.id).catch((error: unknown) =>
+    console.error(`Could not delete snapshots for ${workspace.id}`, error),
+  );
+
   const completed = await completeTransition({
     id: workspace.id,
     from: "destroying",

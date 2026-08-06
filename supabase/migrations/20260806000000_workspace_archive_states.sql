@@ -8,8 +8,8 @@
 --   ready/idle --archive--> archiving --> archived
 --   archived   --restore--> restoring --> ready
 --
--- `restoring` is added now (one enum migration) though the Restore flow lands in
--- a later slice; it is unused until then.
+-- All three states are added in one enum migration; each is consumed by its
+-- lifecycle action (archive/restore) in this milestone.
 
 alter type workspace_status add value if not exists 'archiving';
 alter type workspace_status add value if not exists 'archived';

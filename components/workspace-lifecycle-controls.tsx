@@ -14,7 +14,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
-import type { WorkspaceStatus } from "@/lib/runtime/types";
+import type { ProviderName, WorkspaceStatus } from "@/lib/runtime/types";
 
 type LifecycleAction = "resume" | "suspend" | "destroy" | "archive" | "restore";
 
@@ -29,17 +29,23 @@ const actionLabels: Record<LifecycleAction, string> = {
 export function WorkspaceLifecycleControls({
   workspaceId,
   status,
+  provider,
 }: {
   workspaceId: string;
   status: WorkspaceStatus;
+  provider: ProviderName;
 }) {
   const router = useRouter();
   const [message, setMessage] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<LifecycleAction | null>(null);
   const [isPending, startTransition] = useTransition();
+  // Archive/Restore/Replay are backed by the runtime-agent's Session + Snapshot,
+  // which only the Daytona-backed Runtime provides. Hide them elsewhere so a
+  // legacy/local workspace never shows a control that always fails with a 409.
+  const isRuntime = provider === "daytona";
   const canSuspend = status === "ready" || status === "idle";
   const canResume = status === "suspended";
-  const canArchive = status === "ready" || status === "idle";
+  const canArchive = isRuntime && (status === "ready" || status === "idle");
   const isArchived = status === "archived";
   const canDestroy = canSuspend || canResume || isArchived || status === "failed";
 

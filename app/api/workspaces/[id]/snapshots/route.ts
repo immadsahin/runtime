@@ -16,7 +16,9 @@ export async function GET(_request: Request, context: RouteContext) {
 
   const { id } = await context.params;
   const workspace = await getWorkspace(id);
-  if (!workspace) {
+  if (!workspace || workspace.status === "destroyed") {
+    // A destroyed workspace surrenders its Snapshots (the destroy contract), so
+    // don't list them even if index rows briefly survive the cascade.
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
 

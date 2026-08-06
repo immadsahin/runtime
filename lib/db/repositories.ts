@@ -572,14 +572,6 @@ export async function createWorkspacePullRequest(input: {
 
 // --- snapshots -------------------------------------------------------------
 
-/**
- * Insert the DERIVED index row for a Workspace Snapshot after the agent has
- * uploaded its artifacts (manifest last). The canonical Snapshot lives in
- * storage; this row caches the manifest for cheap listing and carries the
- * retention `policy` (v0 always `manual_only`). `archivedAt` and `storagePath`
- * must be the same values Next used to mint the upload URLs, so the row and the
- * stored objects agree.
- */
 /** A workspace's Snapshots, newest first (the Replay picker's list). */
 export async function listWorkspaceSnapshots(
   workspaceId: string,
@@ -608,6 +600,24 @@ export async function getWorkspaceSnapshot(
   return data ? toWorkspaceSnapshot(data) : null;
 }
 
+/** Remove a workspace's Snapshot index rows (terminal destroy cleanup). */
+export async function deleteWorkspaceSnapshots(workspaceId: string): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("workspace_snapshots")
+    .delete()
+    .eq("workspace_id", workspaceId);
+  if (error) throw error;
+}
+
+/**
+ * Insert the DERIVED index row for a Workspace Snapshot after the agent has
+ * uploaded its artifacts (manifest last). The canonical Snapshot lives in
+ * storage; this row caches the manifest for cheap listing and carries the
+ * retention `policy` (v0 always `manual_only`). `archivedAt` and `storagePath`
+ * must be the same values Next used to mint the upload URLs, so the row and the
+ * stored objects agree.
+ */
 export async function createWorkspaceSnapshot(input: {
   ownerId: string;
   workspaceId: string;

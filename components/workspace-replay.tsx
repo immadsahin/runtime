@@ -46,6 +46,9 @@ export function WorkspaceReplay({
     if (!selectedId) return;
     let active = true;
     const load = async () => {
+      // Drop the previous Snapshot's artifacts immediately so a slow fetch never
+      // pairs stale cast/conversation/diff with the newly-selected label.
+      setData(null);
       setLoading(true);
       setError(null);
       try {

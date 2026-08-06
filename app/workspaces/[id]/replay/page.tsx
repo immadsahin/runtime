@@ -30,7 +30,9 @@ export default async function WorkspaceReplayPage({
 
   return (
     <AppShell immersive>
-      <div className="flex h-full min-h-0 flex-col">
+      {/* Definite viewport height so the terminal/conversation panels' h-full /
+          flex-1 chain resolves instead of collapsing to content height. */}
+      <div className="flex h-dvh min-h-0 flex-col">
         <div className="flex items-center gap-3 border-b px-4 py-2 text-sm">
           <Link className="text-muted-foreground hover:underline" href={`/workspaces/${workspace.id}`}>
             ← {project.fullName}
