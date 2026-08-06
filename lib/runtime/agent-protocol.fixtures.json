@@ -1,31 +1,80 @@
 {
   "RuntimeTokenClaims": [
-    { "workspaceId": "ws-1", "projectId": "proj-1", "computerId": "rc-1", "userId": "u-1", "exp": 1900000000 }
+    {
+      "workspaceId": "ws-1",
+      "projectId": "proj-1",
+      "computerId": "rc-1",
+      "userId": "u-1",
+      "exp": 1900000000
+    }
   ],
   "PtyClientMessage": [
-    { "t": "input", "data": "ls -la\n" },
-    { "t": "resize", "cols": 120, "rows": 34 },
-    { "t": "ping" }
+    {
+      "t": "input",
+      "data": "ls -la\n"
+    },
+    {
+      "t": "resize",
+      "cols": 120,
+      "rows": 34
+    },
+    {
+      "t": "ping"
+    }
   ],
   "PtyServerMessage": [
-    { "t": "output", "data": "hello-from-agent", "seq": 0 },
-    { "t": "role", "writer": true },
-    { "t": "exit", "code": 0 },
-    { "t": "pong" }
+    {
+      "t": "output",
+      "data": "hello-from-agent",
+      "seq": 0
+    },
+    {
+      "t": "role",
+      "writer": true
+    },
+    {
+      "t": "exit",
+      "code": 0
+    },
+    {
+      "t": "pong"
+    }
   ],
   "CreateWorkspaceRequest": [
-    { "workspaceId": "ws-1", "repoFullName": "acme/app", "branch": "feat/x", "baseBranch": "main" }
+    {
+      "workspaceId": "ws-1",
+      "repoFullName": "acme/app",
+      "branch": "feat/x",
+      "baseBranch": "main"
+    }
   ],
   "WorkspaceActionRequest": [
-    { "workspaceId": "ws-1" }
+    {
+      "workspaceId": "ws-1"
+    }
   ],
   "ErrorResponse": [
-    { "error": { "code": "WORKSPACE_NOT_FOUND", "message": "no such workspace" } },
-    { "error": { "code": "AGENT_UNREACHABLE", "message": "agent did not respond" } }
+    {
+      "error": {
+        "code": "WORKSPACE_NOT_FOUND",
+        "message": "no such workspace"
+      }
+    },
+    {
+      "error": {
+        "code": "AGENT_UNREACHABLE",
+        "message": "agent did not respond"
+      }
+    }
   ],
   "SessionUrls": [
-    { "ptyUrl": "wss://8080-abc.daytonaproxy01.net/pty?token=eyJhbGciOi.eyJ3.sig" },
-    { "ptyUrl": "wss://x/pty?token=t", "eventsUrl": "https://x/events?token=t" }
+    {
+      "ptyUrl": "wss://8080-abc.daytonaproxy01.net/pty?token=eyJhbGciOi.eyJ3.sig"
+    },
+    {
+      "ptyUrl": "wss://x/pty?token=t",
+      "eventsUrl": "https://x/events?token=t"
+    }
   ],
   "WorkspaceSummary": [
     {
@@ -41,7 +90,11 @@
         "cache_read_input_tokens": 152345
       },
       "changedFiles": 3,
-      "filesTouched": ["README.md", "src/index.ts", "test/foo.test.ts"],
+      "filesTouched": [
+        "README.md",
+        "src/index.ts",
+        "test/foo.test.ts"
+      ],
       "commitCount": 2,
       "lastAssistantMessage": "I've added the function and a test."
     },
@@ -71,10 +124,26 @@
       "role": "assistant",
       "timestamp": "2026-08-05T00:00:00Z",
       "content": [
-        { "type": "thinking" },
-        { "type": "text", "text": "Adding the function." },
-        { "type": "tool_use", "id": "tool-1", "name": "Bash", "input": { "command": "ls" } },
-        { "type": "tool_result", "toolUseId": "tool-1", "content": "ok" }
+        {
+          "type": "thinking"
+        },
+        {
+          "type": "text",
+          "text": "Adding the function."
+        },
+        {
+          "type": "tool_use",
+          "id": "tool-1",
+          "name": "Bash",
+          "input": {
+            "command": "ls"
+          }
+        },
+        {
+          "type": "tool_result",
+          "toolUseId": "tool-1",
+          "content": "ok"
+        }
       ]
     }
   ],
@@ -89,6 +158,80 @@
     }
   ],
   "WorkspaceStateChanged": [
-    { "t": "state", "workspaceId": "ws-1", "state": "running" }
+    {
+      "t": "state",
+      "workspaceId": "ws-1",
+      "state": "running"
+    }
+  ],
+  "ArchiveWorkspaceRequest": [
+    {
+      "archivedAt": "2026-08-06T00:00:00.000Z",
+      "uploads": [
+        {
+          "artifact": "conversation",
+          "url": "https://storage.example/upload/conversation?token=t"
+        },
+        {
+          "artifact": "cast",
+          "url": "https://storage.example/upload/cast?token=t"
+        },
+        {
+          "artifact": "bundle",
+          "url": "https://storage.example/upload/bundle?token=t"
+        },
+        {
+          "artifact": "patch",
+          "url": "https://storage.example/upload/patch?token=t"
+        },
+        {
+          "artifact": "summary",
+          "url": "https://storage.example/upload/summary?token=t"
+        },
+        {
+          "artifact": "manifest",
+          "url": "https://storage.example/upload/manifest?token=t"
+        }
+      ]
+    }
+  ],
+  "RestoreWorkspaceRequest": [
+    {
+      "branch": "feat/x",
+      "baseBranch": "main",
+      "sessionId": "sess-1",
+      "downloads": [
+        {
+          "artifact": "bundle",
+          "url": "https://storage.example/download/bundle?token=t"
+        },
+        {
+          "artifact": "patch",
+          "url": "https://storage.example/download/patch?token=t"
+        },
+        {
+          "artifact": "conversation",
+          "url": "https://storage.example/download/conversation?token=t"
+        }
+      ]
+    },
+    {
+      "branch": "feat/y",
+      "sessionId": null,
+      "downloads": [
+        {
+          "artifact": "bundle",
+          "url": "https://storage.example/download/bundle?token=t"
+        },
+        {
+          "artifact": "patch",
+          "url": "https://storage.example/download/patch?token=t"
+        },
+        {
+          "artifact": "conversation",
+          "url": "https://storage.example/download/conversation?token=t"
+        }
+      ]
+    }
   ]
 }

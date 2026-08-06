@@ -12,6 +12,11 @@
 
 import { z } from "zod";
 
+import {
+  SNAPSHOT_ARTIFACTS,
+  type SnapshotArtifact,
+} from "@/lib/runtime/snapshot/manifest";
+
 // ---------------------------------------------------------------------------
 // Auth — the short-lived Runtime token the agent verifies on every connection.
 // ---------------------------------------------------------------------------
@@ -70,13 +75,30 @@ export const WorkspaceActionRequest = z.object({
 });
 export type WorkspaceActionRequest = z.infer<typeof WorkspaceActionRequest>;
 
+/** The six Snapshot artifact keys (archive covers all; restore reads a subset). */
+const ARCHIVE_ARTIFACTS = Object.keys(SNAPSHOT_ARTIFACTS) as [
+  SnapshotArtifact,
+  ...SnapshotArtifact[],
+];
+const RESTORE_ARTIFACTS = ["bundle", "patch", "conversation"] as const;
+
+/** True when `got` is exactly `want` as a set — no missing, extra, or dup keys. */
+function coversExactly(got: string[], want: readonly string[]): boolean {
+  const set = new Set(got);
+  return (
+    got.length === want.length &&
+    set.size === want.length &&
+    want.every((k) => set.has(k))
+  );
+}
+
 /**
  * One signed upload URL the control plane mints for a Snapshot artifact. The
  * agent PUTs that artifact's bytes to the URL — it never holds bucket
  * credentials (M4 open decision #1). `artifact` is a key of SNAPSHOT_ARTIFACTS.
  */
 export const ArchiveUpload = z.object({
-  artifact: z.string().min(1),
+  artifact: z.enum(ARCHIVE_ARTIFACTS),
   url: z.string().url(),
 });
 export type ArchiveUpload = z.infer<typeof ArchiveUpload>;
@@ -84,18 +106,24 @@ export type ArchiveUpload = z.infer<typeof ArchiveUpload>;
 /**
  * Archive-time inputs the agent needs to PRODUCE a Snapshot: the logical archive
  * timestamp (echoed verbatim into the manifest so it matches the storage prefix
- * Next derived from it) and one signed upload URL per artifact. The agent
- * replies with the assembled `SnapshotManifest` (uploaded LAST).
+ * Next derived from it) and a signed upload URL for EVERY artifact — requiring
+ * the full set here prevents an incomplete Snapshot (a manifest pointing at
+ * missing objects) from ever being persisted as an archived workspace.
  */
-export const ArchiveWorkspaceRequest = z.object({
-  archivedAt: z.string().min(1),
-  uploads: z.array(ArchiveUpload).min(1),
-});
+export const ArchiveWorkspaceRequest = z
+  .object({
+    archivedAt: z.string().min(1),
+    uploads: z.array(ArchiveUpload),
+  })
+  .refine((v) => coversExactly(v.uploads.map((u) => u.artifact), ARCHIVE_ARTIFACTS), {
+    message: "archive uploads must cover exactly the six Snapshot artifacts",
+    path: ["uploads"],
+  });
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequest>;
 
 /** One signed download URL for a Snapshot artifact the agent reads at Restore. */
 export const RestoreDownload = z.object({
-  artifact: z.string().min(1),
+  artifact: z.enum(RESTORE_ARTIFACTS),
   url: z.string().url(),
 });
 export type RestoreDownload = z.infer<typeof RestoreDownload>;
@@ -103,16 +131,21 @@ export type RestoreDownload = z.infer<typeof RestoreDownload>;
 /**
  * Inputs to rebuild an archived Session on a (possibly fresh) box: the branch to
  * check out, the Claude sessionId to place the conversation under (so
- * `claude --continue` resumes the exact session), and signed download URLs for
- * the tree (bundle + patch) and conversation JSONL. The agent materializes,
- * verifies, and only then relaunches Claude.
+ * `claude --continue` resumes the exact session), and download URLs for EVERY
+ * artifact Restore needs — `bundle`, `patch`, and `conversation`. Requiring the
+ * full set prevents a false-success restore that can't resume the session.
  */
-export const RestoreWorkspaceRequest = z.object({
-  branch: z.string().min(1),
-  baseBranch: z.string().optional(),
-  sessionId: z.string().min(1).nullable(),
-  downloads: z.array(RestoreDownload).min(1),
-});
+export const RestoreWorkspaceRequest = z
+  .object({
+    branch: z.string().min(1),
+    baseBranch: z.string().optional(),
+    sessionId: z.string().min(1).nullable(),
+    downloads: z.array(RestoreDownload),
+  })
+  .refine((v) => coversExactly(v.downloads.map((d) => d.artifact), RESTORE_ARTIFACTS), {
+    message: "restore downloads must cover exactly bundle, patch, and conversation",
+    path: ["downloads"],
+  });
 export type RestoreWorkspaceRequest = z.infer<typeof RestoreWorkspaceRequest>;
 
 export const ErrorCode = z.enum([
@@ -261,6 +294,8 @@ export const PROTOCOL_SCHEMAS = {
   PtyServerMessage,
   CreateWorkspaceRequest,
   WorkspaceActionRequest,
+  ArchiveWorkspaceRequest,
+  RestoreWorkspaceRequest,
   ErrorResponse,
   SessionUrls,
   WorkspaceSummary,

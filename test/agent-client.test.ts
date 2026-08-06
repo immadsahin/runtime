@@ -87,19 +87,35 @@ test("archiveWorkspace posts the archive body and parses the manifest", async ()
     return new Response(JSON.stringify(manifest), { status: 200 });
   }) as unknown as typeof fetch;
 
+  const uploads = (["conversation", "cast", "bundle", "patch", "summary", "manifest"] as const).map(
+    (artifact) => ({ artifact, url: `https://storage.example/upload/${artifact}?token=t` }),
+  );
   const client = new AgentClient(target, fakeFetch);
   const out = await client.archiveWorkspace(identity, {
     archivedAt: "2026-08-06T00:05:00Z",
-    uploads: [{ artifact: "manifest", url: "https://storage.example/upload/manifest?token=t" }],
+    uploads,
   });
 
   assert.equal(seenUrl, "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/archive");
-  assert.deepEqual(seenBody, {
-    archivedAt: "2026-08-06T00:05:00Z",
-    uploads: [{ artifact: "manifest", url: "https://storage.example/upload/manifest?token=t" }],
-  });
+  assert.deepEqual(seenBody, { archivedAt: "2026-08-06T00:05:00Z", uploads });
   assert.equal(out.workspaceId, "ws-1");
   assert.equal(out.tree.kind, "git-bundle+patch");
+});
+
+test("archiveWorkspace rejects a request missing an artifact upload", async () => {
+  let called = false;
+  const fakeFetch = (async () => {
+    called = true;
+    return new Response("{}", { status: 200 });
+  }) as unknown as typeof fetch;
+  const client = new AgentClient(target, fakeFetch);
+  await assert.rejects(() =>
+    client.archiveWorkspace(identity, {
+      archivedAt: "2026-08-06T00:05:00Z",
+      uploads: [{ artifact: "manifest", url: "https://storage.example/m?token=t" }],
+    }),
+  );
+  assert.equal(called, false);
 });
 
 test("archiveWorkspace rejects a malformed manifest response", async () => {
@@ -112,7 +128,9 @@ test("archiveWorkspace rejects a malformed manifest response", async () => {
   await assert.rejects(() =>
     client.archiveWorkspace(identity, {
       archivedAt: "2026-08-06T00:05:00Z",
-      uploads: [{ artifact: "manifest", url: "https://storage.example/x?token=t" }],
+      uploads: (["conversation", "cast", "bundle", "patch", "summary", "manifest"] as const).map(
+        (artifact) => ({ artifact, url: `https://storage.example/${artifact}?token=t` }),
+      ),
     }),
   );
 });
