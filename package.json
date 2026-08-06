@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --import ./scripts/test-loader.mjs --test \"test/**/*.test.ts\"",
     "verify:daytona:m4": "node --experimental-strip-types --import ./scripts/test-loader.mjs --env-file=.env.local scripts/verify-daytona-m4.ts",
+    "verify:e2b": "node --experimental-strip-types --import ./scripts/test-loader.mjs --env-file=.env.local scripts/verify-e2b.ts",
     "check": "pnpm typecheck && pnpm lint && pnpm test"
   },
   "dependencies": {
