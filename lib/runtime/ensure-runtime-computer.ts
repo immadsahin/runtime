@@ -11,6 +11,8 @@ const PROVISION_WAIT_MS = 3 * 60_000;
 
 export type RuntimeComputerProvisioner = {
   provisionComputer(input: ProvisionComputerInput): Promise<ProvisionedComputer>;
+  /** Compensate for a provisioned computer that could not be durably claimed. */
+  destroyComputer(computerId: string): Promise<void>;
 };
 
 type Claim = (input: {
@@ -108,8 +110,9 @@ export async function ensureRuntimeComputer(
     return { computer, provisioned: false, agentSecret: persistedSecret };
   }
 
+  let provisioned: ProvisionedComputer | null = null;
   try {
-    const provisioned = await provider.provisionComputer({
+    provisioned = await provider.provisionComputer({
       secret: agentSecret,
       repoFullName: input.repoFullName,
       githubToken: input.githubToken,
@@ -129,12 +132,38 @@ export async function ensureRuntimeComputer(
     }
     return { computer, provisioned: true, agentSecret };
   } catch (error) {
-    await deps.update(claim.computer.id, {
+    let cleanupError: unknown = null;
+    if (provisioned) {
+      try {
+        // An external computer that has passed provisioning but whose handle
+        // was not durably written is unreachable by normal lifecycle cleanup.
+        // Compensate immediately rather than leaving an isolated provider
+        // resource running and billed.
+        await provider.destroyComputer(provisioned.computerId);
+      } catch (destroyError) {
+        cleanupError = destroyError;
+      }
+    }
+    const failurePatch: Parameters<EnsureRuntimeComputerDependencies["update"]>[1] = {
       status: "error",
       errorMessage: "Runtime Computer provisioning failed. Check Runtime setup and try again.",
-    }).catch((updateError: unknown) =>
+    };
+    if (cleanupError && provisioned) {
+      // If external cleanup could not be confirmed, retain the provider handle
+      // and block automatic reprovisioning until an operator resolves it.
+      // Starting a replacement while this handle may still be live would create
+      // a duplicate isolated, billable computer.
+      failurePatch.providerComputerId = provisioned.computerId;
+    }
+    await deps.update(claim.computer.id, failurePatch).catch((updateError: unknown) =>
       console.error("Could not save Runtime Computer failure state", updateError),
     );
+    if (cleanupError && provisioned) {
+      throw new AggregateError(
+        [error, cleanupError],
+        `Runtime Computer persistence failed and cleanup also failed for ${provisioned.computerId}.`,
+      );
+    }
     throw error;
   }
 }

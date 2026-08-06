@@ -7,6 +7,7 @@ import {
   getRuntimeComputer,
   getWorkspace,
   getWorkspacePullRequest,
+  transitionWorkspace,
 } from "@/lib/db/repositories";
 import { optionalEnv, requireEnv } from "@/lib/env";
 import {
@@ -20,8 +21,10 @@ import {
   providerErrorResponse,
   resolveProvider,
 } from "@/lib/runtime/resolve";
-import { isAutoPausedComputeWorkspace } from "@/lib/runtime/compute-lifecycle";
-import { updateWorkspace } from "@/lib/db/repositories";
+import {
+  autoPauseWorkspaceTransition,
+  isAutoPausedComputeWorkspace,
+} from "@/lib/runtime/compute-lifecycle";
 
 export const dynamic = "force-dynamic";
 
@@ -131,10 +134,7 @@ export async function POST(request: Request, context: RouteContext) {
       // silently restart billed compute; persist the pause and require the
       // user to choose the explicit Resume lifecycle action first.
       if (await isAutoPausedComputeWorkspace(computer, provider)) {
-        await updateWorkspace(workspace.id, {
-          status: "suspended",
-          errorMessage: "Runtime Computer paused after inactivity. Resume the workspace to continue.",
-        });
+        await transitionWorkspace(autoPauseWorkspaceTransition(workspace.id));
         return NextResponse.json(
           { error: "Runtime Computer paused after inactivity. Resume the workspace before publishing." },
           { status: 409 },

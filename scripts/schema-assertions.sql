@@ -251,6 +251,20 @@ begin
     if sqlerrm <> 'Runtime Computer placement is immutable' then raise; end if;
   end;
 
+  -- An unconfirmed provider cleanup must retain its handle and block automatic
+  -- reprovisioning, rather than creating a second potentially billed computer.
+  update runtime_computers
+  set status = 'error', provider_computer_id = 'unconfirmed-cleanup-handle'
+  where id = e2b_id;
+  begin
+    perform claim_runtime_computer(
+      claimed_project_id, 'workspace:' || workspace_id::text, 'e2b', 'isolated', 'secret-5', 'e2b-v1'
+    );
+    raise exception 'FAIL: computer with unconfirmed cleanup was reprovisioned';
+  exception when raise_exception then
+    if sqlerrm <> 'Runtime Computer cleanup is incomplete' then raise; end if;
+  end;
+
   -- Deleting a Runtime Computer must retain its workspace's required owner and
   -- project identity while clearing only the optional computer reference.
   update workspaces set computer_id = e2b_id where id = workspace_id;

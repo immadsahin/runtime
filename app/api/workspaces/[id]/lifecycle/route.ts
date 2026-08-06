@@ -19,6 +19,7 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { runtimeSessionEnvironment } from "@/lib/runtime/ensure-runtime-computer";
 import {
+  autoPauseWorkspaceTransition,
   isAutoPausedComputeWorkspace,
   pauseArchivedIsolatedComputer,
 } from "@/lib/runtime/compute-lifecycle";
@@ -385,10 +386,7 @@ async function computeAgent(
     throw new Error("Runtime Computer is not available.");
   }
   if (await isAutoPausedComputeWorkspace(computer, provider)) {
-    await updateWorkspace(workspace.id, {
-      status: "suspended",
-      errorMessage: "Runtime Computer paused after inactivity. Resume the workspace to continue.",
-    });
+    await transitionWorkspace(autoPauseWorkspaceTransition(workspace.id));
     throw new Error("Runtime Computer paused after inactivity; resume the workspace first.");
   }
   const secret = await readRuntimeComputerSecret(computer.id);

@@ -5,12 +5,14 @@ import {
   getRuntimeComputer,
   getWorkspace,
   readRuntimeComputerSecret,
-  updateWorkspace,
+  transitionWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
 import {
+  AUTO_PAUSE_MESSAGE,
+  autoPauseWorkspaceTransition,
   hasActiveComputeWorkspace,
   isAutoPausedComputeWorkspace,
 } from "@/lib/runtime/compute-lifecycle";
@@ -89,12 +91,9 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
   if (await isAutoPausedComputeWorkspace(computer, provider)) {
-    await updateWorkspace(workspace.id, {
-      status: "suspended",
-      errorMessage: "Runtime Computer paused after inactivity. Resume the workspace to continue.",
-    });
+    await transitionWorkspace(autoPauseWorkspaceTransition(workspace.id));
     return NextResponse.json(
-      { error: "Runtime Computer paused after inactivity. Resume the workspace to continue." },
+      { error: AUTO_PAUSE_MESSAGE },
       { status: 409 },
     );
   }

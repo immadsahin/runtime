@@ -1,5 +1,26 @@
 import type { ComputeProvider } from "@/lib/runtime/compute-provider";
-import type { RuntimeComputer, Workspace } from "@/lib/runtime/types";
+import type { RuntimeComputer, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
+
+export const AUTO_PAUSE_MESSAGE =
+  "Runtime Computer paused after inactivity. Resume the workspace to continue.";
+
+/**
+ * A paused provider resource should only replace an active workspace state.
+ * Polling requests can race with archive, restore, suspend, or destroy; their
+ * transition state is authoritative and must never be overwritten by a stale
+ * observation that the E2B computer is paused.
+ */
+export function autoPauseWorkspaceTransition(id: string): {
+  id: string;
+  from: WorkspaceStatus[];
+  patch: { status: WorkspaceStatus; errorMessage: string };
+} {
+  return {
+    id,
+    from: ["ready", "idle"],
+    patch: { status: "suspended", errorMessage: AUTO_PAUSE_MESSAGE },
+  };
+}
 
 /**
  * Agent target lookup must not happen for a suspended workspace: E2B's target

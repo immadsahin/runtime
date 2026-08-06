@@ -122,6 +122,13 @@ begin
     end if;
     runtime_computer_id := existing.id;
     if existing.status in ('error', 'stopped') then
+      -- A failed post-provision persistence can retain a provider handle only
+      -- when terminal cleanup was not confirmed. Do not clear that handle and
+      -- create a replacement: the original isolated computer could still be
+      -- live and billed. An operator must resolve the recorded handle first.
+      if existing.provider_computer_id is not null then
+        raise exception 'Runtime Computer cleanup is incomplete';
+      end if;
       update runtime_computers set status = 'provisioning', agent_secret = requested_agent_secret,
         provider_computer_id = null, agent_base_url = null, provision_timings = null,
         error_message = null where id = existing.id;

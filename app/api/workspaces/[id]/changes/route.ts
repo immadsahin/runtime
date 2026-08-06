@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getRuntimeComputer, getWorkspace, updateWorkspace } from "@/lib/db/repositories";
 import {
+  getRuntimeComputer,
+  getWorkspace,
+  transitionWorkspace,
+} from "@/lib/db/repositories";
+import {
+  autoPauseWorkspaceTransition,
   hasActiveComputeWorkspace,
   isAutoPausedComputeWorkspace,
 } from "@/lib/runtime/compute-lifecycle";
@@ -63,10 +68,7 @@ export async function GET(request: Request, context: RouteContext) {
         );
       }
       if (await isAutoPausedComputeWorkspace(computer, provider)) {
-        await updateWorkspace(workspace.id, {
-          status: "suspended",
-          errorMessage: "Runtime Computer paused after inactivity. Resume the workspace to continue.",
-        });
+        await transitionWorkspace(autoPauseWorkspaceTransition(workspace.id));
         return NextResponse.json(
           { error: "Runtime Computer paused after inactivity. Resume the workspace to view its changes." },
           { status: 409 },

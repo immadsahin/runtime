@@ -117,6 +117,7 @@ test("concurrent first-workspace ensures provision exactly one Runtime Computer"
         timings: { stages: [{ stage: "sandbox_create", ms: 10 }], totalMs: 10 },
       };
     },
+    destroyComputer: async () => undefined,
   };
 
   const [first, second] = await Promise.all([
@@ -135,7 +136,10 @@ test("a provision failure is persisted as an error for a later retry", async () 
   await assert.rejects(
     () =>
       ensureRuntimeComputer(
-        { provisionComputer: async () => Promise.reject(new Error("Daytona unavailable")) },
+        {
+          provisionComputer: async () => Promise.reject(new Error("Daytona unavailable")),
+          destroyComputer: async () => undefined,
+        },
         input,
         harness.deps,
       ),
@@ -165,6 +169,7 @@ test("a failed Runtime Computer can be claimed and provisioned by a retry", asyn
         timings: { stages: [{ stage: "sandbox_create", ms: 10 }], totalMs: 10 },
       };
     },
+    destroyComputer: async () => undefined,
   };
 
   await assert.rejects(() => ensureRuntimeComputer(provider, input, harness.deps));
@@ -188,6 +193,7 @@ test("an isolated placement retains its provider, workspace key, and template ve
         browserBaseUrl: "https://agent.example.test",
         timings: { stages: [{ stage: "sandbox_create", ms: 10 }], totalMs: 10 },
       }),
+      destroyComputer: async () => undefined,
     },
     {
       ...input,
@@ -203,4 +209,85 @@ test("an isolated placement retains its provider, workspace key, and template ve
   assert.equal(ensured.computer.placementKey, "workspace:workspace-1");
   assert.equal(ensured.computer.topology, "isolated");
   assert.equal(ensured.computer.imageVersion, "runtime-computer-e2b-v1");
+});
+
+test("a persistence failure after provisioning destroys the otherwise orphaned computer", async () => {
+  const harness = concurrencyHarness();
+  const update = harness.deps.update;
+  let failReadyPersistence = true;
+  harness.deps.update = async (id, patch) => {
+    if (patch.status === "ready" && failReadyPersistence) {
+      failReadyPersistence = false;
+      throw new Error("database unavailable");
+    }
+    return update(id, patch);
+  };
+  const destroyed: string[] = [];
+
+  await assert.rejects(
+    ensureRuntimeComputer(
+      {
+        provisionComputer: async () => ({
+          computerId: "e2b-orphan-risk",
+          controlBaseUrl: "https://agent.example.test",
+          controlHeaders: {},
+          browserBaseUrl: "https://agent.example.test",
+          timings: { stages: [{ stage: "sandbox_create", ms: 10 }], totalMs: 10 },
+        }),
+        destroyComputer: async (computerId) => { destroyed.push(computerId); },
+      },
+      {
+        ...input,
+        provider: "e2b",
+        placementKey: "workspace:workspace-1",
+        topology: "isolated",
+      },
+      harness.deps,
+    ),
+    /database unavailable/,
+  );
+
+  assert.deepEqual(destroyed, ["e2b-orphan-risk"]);
+  assert.equal(harness.row()?.status, "error");
+  assert.equal(harness.row()?.providerComputerId, null);
+});
+
+test("an unconfirmed compensation retains the provider handle and surfaces both failures", async () => {
+  const harness = concurrencyHarness();
+  const update = harness.deps.update;
+  let failReadyPersistence = true;
+  harness.deps.update = async (id, patch) => {
+    if (patch.status === "ready" && failReadyPersistence) {
+      failReadyPersistence = false;
+      throw new Error("database unavailable");
+    }
+    return update(id, patch);
+  };
+
+  await assert.rejects(
+    ensureRuntimeComputer(
+      {
+        provisionComputer: async () => ({
+          computerId: "e2b-unconfirmed-cleanup",
+          controlBaseUrl: "https://agent.example.test",
+          controlHeaders: {},
+          browserBaseUrl: "https://agent.example.test",
+          timings: { stages: [{ stage: "sandbox_create", ms: 10 }], totalMs: 10 },
+        }),
+        destroyComputer: async () => { throw new Error("E2B controller unavailable"); },
+      },
+      {
+        ...input,
+        provider: "e2b",
+        placementKey: "workspace:workspace-1",
+        topology: "isolated",
+      },
+      harness.deps,
+    ),
+    (error: unknown) => error instanceof AggregateError &&
+      /persistence failed and cleanup also failed/i.test(error.message),
+  );
+
+  assert.equal(harness.row()?.status, "error");
+  assert.equal(harness.row()?.providerComputerId, "e2b-unconfirmed-cleanup");
 });
