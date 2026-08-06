@@ -6,6 +6,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -146,6 +147,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 		return name, nil // already running
 	}
 	worktree := s.worktreePath(workspaceID)
+	s.seedClaudeOnboarding(worktree)
 	env := claude.SessionEnv(s.env, anthropicToken)
 	cmd := claude.Command(s.orientation(ctx, workspaceID, worktree))
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
@@ -156,12 +158,28 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	return name, nil
 }
 
+// seedClaudeOnboarding pre-answers Claude Code's interactive first-run gates
+// (theme/login/trust/bypass) so a session starts headless instead of blocking on
+// a TUI prompt. Best-effort: a failure only means Claude may stall on an
+// onboarding screen (visible in the terminal) — not worth failing Start over.
+func (s *Service) seedClaudeOnboarding(worktree string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("claude onboarding seed: home dir: %v", err)
+		return
+	}
+	if err := claude.EnsureOnboarding(home, worktree); err != nil {
+		log.Printf("claude onboarding seed: %v", err)
+	}
+}
+
 // Resume re-launches Claude with --continue after an exit or box restart.
 // The Summary collector is (re)started so post-restart activity is folded in.
 func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
 	name := sessionName(workspaceID)
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
+	s.seedClaudeOnboarding(worktree)
 	env := claude.SessionEnv(s.env, anthropicToken)
 	cmd := claude.ContinueCommand(s.orientation(ctx, workspaceID, worktree))
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {

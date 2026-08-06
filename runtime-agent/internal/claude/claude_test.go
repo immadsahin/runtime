@@ -1,97 +1,115 @@
 package claude
 
 import (
-	"slices"
-	"strings"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestOrientationRendersBranchAndBase(t *testing.T) {
-	got := Orientation("feature/login", "main")
-
-	if !strings.Contains(got, "on branch `feature/login`, based on `main`, inside a persistent cloud computer.") {
-		t.Errorf("location sentence missing branch/base:\n%s", got)
+func readConfig(t *testing.T, home string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
 	}
-	// The four workspace rules must always be present.
-	for _, want := range []string{
-		"Your session persists.",
-		"published as a pull request",
-		"Other workspaces are isolated",
-		"Follow this repository's CLAUDE.md",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("orientation missing rule %q:\n%s", want, got)
-		}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	return cfg
+}
+
+func projectEntry(t *testing.T, cfg map[string]any, worktree string) map[string]any {
+	t.Helper()
+	projects, ok := cfg["projects"].(map[string]any)
+	if !ok {
+		t.Fatalf("projects missing or wrong type: %T", cfg["projects"])
+	}
+	proj, ok := projects[worktree].(map[string]any)
+	if !ok {
+		t.Fatalf("project entry for %q missing", worktree)
+	}
+	return proj
+}
+
+func TestEnsureOnboardingSeedsAllGates(t *testing.T) {
+	home := t.TempDir()
+	worktree := "/home/runtime/workspaces/ws-1"
+	if err := EnsureOnboarding(home, worktree); err != nil {
+		t.Fatalf("EnsureOnboarding: %v", err)
+	}
+	cfg := readConfig(t, home)
+	if cfg["theme"] != "dark" {
+		t.Errorf("theme = %v, want dark", cfg["theme"])
+	}
+	if cfg["hasCompletedOnboarding"] != true {
+		t.Errorf("hasCompletedOnboarding = %v, want true", cfg["hasCompletedOnboarding"])
+	}
+	if cfg["bypassPermissionsModeAccepted"] != true {
+		t.Errorf("bypassPermissionsModeAccepted = %v, want true", cfg["bypassPermissionsModeAccepted"])
+	}
+	proj := projectEntry(t, cfg, worktree)
+	if proj["hasTrustDialogAccepted"] != true {
+		t.Errorf("hasTrustDialogAccepted = %v, want true", proj["hasTrustDialogAccepted"])
+	}
+	if proj["hasCompletedProjectOnboarding"] != true {
+		t.Errorf("hasCompletedProjectOnboarding = %v, want true", proj["hasCompletedProjectOnboarding"])
 	}
 }
 
-func TestOrientationDegradesWhenFactsMissing(t *testing.T) {
-	tests := []struct {
-		name            string
-		branch, base    string
-		wantLocation    string
-		wantNotContains string
-	}{
-		{
-			name:            "branch only omits base clause",
-			branch:          "feature/login",
-			wantLocation:    "an isolated git worktree on branch `feature/login`, inside a persistent cloud computer.",
-			wantNotContains: "based on",
+func TestEnsureOnboardingPreservesExistingKeys(t *testing.T) {
+	home := t.TempDir()
+	// Simulate an existing config Claude wrote (userID, an unrelated project).
+	existing := map[string]any{
+		"userID": "abc123",
+		"projects": map[string]any{
+			"/home/runtime/workspaces/other": map[string]any{"history": []any{"x"}},
 		},
-		{
-			name:            "no facts falls back to bare worktree",
-			wantLocation:    "an isolated git worktree inside a persistent cloud computer.",
-			wantNotContains: "on branch",
-		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := Orientation(tt.branch, tt.base)
-			if !strings.Contains(got, tt.wantLocation) {
-				t.Errorf("want location %q in:\n%s", tt.wantLocation, got)
-			}
-			if strings.Contains(got, tt.wantNotContains) {
-				t.Errorf("did not expect %q in:\n%s", tt.wantNotContains, got)
-			}
-			// Rules are branch-independent and must survive degradation.
-			if !strings.Contains(got, "Follow this repository's CLAUDE.md") {
-				t.Errorf("rules dropped on degraded prompt:\n%s", got)
-			}
-		})
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	worktree := "/home/runtime/workspaces/ws-2"
+	if err := EnsureOnboarding(home, worktree); err != nil {
+		t.Fatalf("EnsureOnboarding: %v", err)
+	}
+	cfg := readConfig(t, home)
+
+	if cfg["userID"] != "abc123" {
+		t.Errorf("userID not preserved: %v", cfg["userID"])
+	}
+	// The unrelated project entry must survive.
+	other := projectEntry(t, cfg, "/home/runtime/workspaces/other")
+	if _, ok := other["history"]; !ok {
+		t.Errorf("unrelated project entry was clobbered: %v", other)
+	}
+	// The new worktree gets trust seeded without touching the other one.
+	if projectEntry(t, cfg, worktree)["hasTrustDialogAccepted"] != true {
+		t.Errorf("new worktree trust not seeded")
 	}
 }
 
-func TestCommandInjectsOrientation(t *testing.T) {
-	orientation := Orientation("feature/login", "main")
-
-	for _, tc := range []struct {
-		name string
-		argv []string
-		head []string
-	}{
-		{"Command", Command(orientation), []string{"claude", "--permission-mode", "bypassPermissions"}},
-		{"ContinueCommand", ContinueCommand(orientation), []string{"claude", "--continue", "--permission-mode", "bypassPermissions"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if !slices.Equal(tc.argv[:len(tc.head)], tc.head) {
-				t.Errorf("unexpected base argv: %v", tc.argv)
-			}
-			i := slices.Index(tc.argv, "--append-system-prompt")
-			if i < 0 {
-				t.Fatalf("argv missing --append-system-prompt: %v", tc.argv)
-			}
-			if i != len(tc.argv)-2 || tc.argv[i+1] != orientation {
-				t.Errorf("orientation not passed as the flag value: %v", tc.argv)
-			}
-		})
+func TestEnsureOnboardingIdempotent(t *testing.T) {
+	home := t.TempDir()
+	worktree := "/home/runtime/workspaces/ws-3"
+	if err := EnsureOnboarding(home, worktree); err != nil {
+		t.Fatalf("first: %v", err)
 	}
-}
-
-func TestCommandOmitsFlagWhenNoOrientation(t *testing.T) {
-	if slices.Contains(Command(""), "--append-system-prompt") {
-		t.Errorf("empty orientation must not add the flag: %v", Command(""))
+	first, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if slices.Contains(ContinueCommand(""), "--append-system-prompt") {
-		t.Errorf("empty orientation must not add the flag: %v", ContinueCommand(""))
+	if err := EnsureOnboarding(home, worktree); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	second, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Errorf("not idempotent:\nfirst=%s\nsecond=%s", first, second)
 	}
 }

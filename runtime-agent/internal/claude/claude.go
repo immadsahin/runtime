@@ -3,7 +3,63 @@
 // it talk to Anthropic directly with the injected session credentials.
 package claude
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+// EnsureOnboarding pre-completes Claude Code's interactive first-run gates so a
+// session launches straight into work instead of blocking on a TUI prompt no one
+// can answer in an autonomous workspace.
+//
+// Claude Code (>=2.1) walks a fresh install through four interactive screens —
+// theme picker, login method, folder-trust, and the bypassPermissions warning —
+// each of which halts the process waiting for a keypress. Runtime runs Claude
+// headless (bypassPermissions, "work while the laptop is closed"), so these must
+// be pre-answered in ~/.claude.json. The theme/login/bypass flags are global; the
+// trust dialog is keyed by the project's absolute path, so it must be seeded per
+// worktree — a new workspace on the same box would otherwise re-prompt.
+//
+// It merges into any existing config (preserving Claude's own keys) and is
+// idempotent, so it's safe to call before every Start/Resume.
+func EnsureOnboarding(home, worktree string) error {
+	path := filepath.Join(home, ".claude.json")
+
+	cfg := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		// Preserve existing keys; only fall back to a fresh object if the file is
+		// unreadable JSON (Claude rewrites it on start, so a stale parse is rare).
+		_ = json.Unmarshal(data, &cfg)
+	}
+
+	cfg["theme"] = "dark"
+	cfg["hasCompletedOnboarding"] = true
+	cfg["bypassPermissionsModeAccepted"] = true
+
+	projects, ok := cfg["projects"].(map[string]any)
+	if !ok || projects == nil {
+		projects = map[string]any{}
+	}
+	proj, ok := projects[worktree].(map[string]any)
+	if !ok || proj == nil {
+		proj = map[string]any{}
+	}
+	proj["hasTrustDialogAccepted"] = true
+	proj["hasCompletedProjectOnboarding"] = true
+	projects[worktree] = proj
+	cfg["projects"] = projects
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal claude config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
 
 // Command returns the argv for launching an interactive Claude Code session.
 //
