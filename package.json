@@ -25,6 +25,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "form-data": "^4.0.6",
+    "highlight.js": "^11.11.1",
     "lucide-react": "^0.552.0",
     "modal": "^0.9.0",
     "next": "16.2.12",
@@ -32,6 +33,9 @@
     "radix-ui": "^1.6.7",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
     "zod": "^4.4.3"
