@@ -44,15 +44,28 @@ const DEFAULT_TEMPLATE = "runtime-computer-e2b-v1";
 const DEFAULT_BINARY_PATH = ".context/build/runtime-agent-linux-amd64";
 const DEFAULT_TIMEOUT_MS = 60 * 60_000;
 
+// Synchronous on-box commands (a full mirror clone, fetch/push, the agent boot)
+// routinely exceed E2B's 60s default per-command timeout. Detached launches are
+// unaffected — they return immediately — so only the blocking exec paths raise it.
+const COMMAND_TIMEOUT_MS = 15 * 60_000;
+
 type E2BCommandResult = { stdout: string; stderr: string; exitCode: number };
 
 function isNotFoundError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
-  const detail = error as { status?: unknown; statusCode?: unknown; code?: unknown; message?: unknown };
+  const detail = error as {
+    status?: unknown; statusCode?: unknown; code?: unknown; name?: unknown; message?: unknown;
+  };
   return detail.status === 404 ||
     detail.statusCode === 404 ||
     detail.code === 404 ||
     detail.code === "NOT_FOUND" ||
+    // Real E2B throws `SandboxNotFoundError` (extends Error: name + message only,
+    // no status/code fields), so class name is the reliable signal — the HTTP
+    // fields above never match a thrown SDK not-found and the message regex is a
+    // last-resort fallback that a wording change could silently break.
+    detail.name === "SandboxNotFoundError" ||
+    detail.name === "NotFoundError" ||
     (typeof detail.message === "string" && /sandbox.*not found|not found.*sandbox/i.test(detail.message));
 }
 
@@ -62,7 +75,7 @@ export type E2BSandbox = {
   commands: {
     run: (
       command: string,
-      options?: { background?: boolean; envs?: Record<string, string> },
+      options?: { background?: boolean; envs?: Record<string, string>; timeoutMs?: number },
     ) => Promise<E2BCommandResult | unknown>;
   };
   files: {
@@ -80,6 +93,7 @@ export type E2BSandboxClient = {
     template: string,
     options: {
       apiKey: string;
+      secure: boolean;
       timeoutMs: number;
       metadata: Record<string, string>;
       lifecycle: {
@@ -168,7 +182,7 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
   private boxIO(sandbox: E2BSandbox): BoxIO {
     return {
       exec: async (command) => {
-        const result = await sandbox.commands.run(command) as E2BCommandResult;
+        const result = await sandbox.commands.run(command, { timeoutMs: COMMAND_TIMEOUT_MS }) as E2BCommandResult;
         return { stdout: `${result.stdout ?? ""}${result.stderr ?? ""}`, exitCode: result.exitCode ?? 0 };
       },
       launch: async (command) => {
@@ -183,7 +197,10 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
   private gitExec(sandbox: E2BSandbox): GitExec {
     return async (argv, options) => {
       const command = `bash -lc ${shellQuote(argv.map(shellQuote).join(" "))}`;
-      const result = await sandbox.commands.run(command, { envs: options?.env }) as E2BCommandResult;
+      const result = await sandbox.commands.run(command, {
+        envs: options?.env,
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      }) as E2BCommandResult;
       return {
         stdout: result.stdout ?? "",
         stderr: result.stderr ?? "",
@@ -202,6 +219,15 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
       sandbox = await timer.stage("sandbox_create", () =>
         this.client.create(this.template(), {
           apiKey,
+          // Public agent traffic carries no E2B credential — the runtime-agent
+          // authorizes every request with the short-lived Runtime JWT instead.
+          // E2B's default `secure: true` would make its edge proxy require a
+          // traffic-access-token header on every call to `<port>-<id>.e2b.app`;
+          // browsers cannot set that header on a WS upgrade, so the PTY/SSE (and
+          // all control calls, which only send the Runtime JWT) would be 401'd at
+          // the edge before ever reaching the agent. Disable it and rely on the
+          // agent's own token check.
+          secure: false,
           timeoutMs: this.timeoutMs(),
           metadata: { ...input.labels, "runtime.role": "computer", "runtime.topology": "isolated" },
           // A Runtime workspace retains its immutable placement across an E2B
@@ -300,17 +326,17 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
 
   async destroyComputer(computerId: string): Promise<void> {
     if (!computerId) return;
-    // Terminal destroy is retryable. If an operator or a prior successful
-    // request already removed the sandbox, there is no billed resource left to
-    // clean up and the workspace may converge to its destroyed state.
+    // Terminal destroy is retryable and idempotent. If an operator or a prior
+    // successful request already removed the sandbox, there is no billed resource
+    // left to clean up and the workspace may converge to its destroyed state.
     if (!(await this.computerExistsForDestroy(computerId))) return;
-    // Do not hide a provider deletion failure. Callers must keep the persisted
-    // placement/workspace retryable rather than reporting an orphaned billed
-    // sandbox as successfully destroyed.
-    const deleted = await this.client.kill(computerId, { apiKey: this.apiKey() });
-    if (!deleted) {
-      throw new Error(`E2B did not confirm deletion of computer ${computerId}.`);
-    }
+    // E2B's `kill` returns false ONLY when the sandbox is already gone (404);
+    // genuine controller failures throw (and propagate here so the caller keeps
+    // the placement retryable rather than reporting an orphaned billed sandbox as
+    // destroyed). A false return means the box was reaped in the window after the
+    // existence check above — that is still terminal-cleanup success, not a
+    // failure, so it must not throw.
+    await this.client.kill(computerId, { apiKey: this.apiKey() });
   }
 
   async agentTarget(computerId: string, secret: string): Promise<AgentTarget> {

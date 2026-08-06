@@ -14,6 +14,7 @@ import { getRuntimeProvider, resetRuntimeProvider } from "@/lib/runtime/provider
 
 type Calls = {
   created: number;
+  secure?: boolean;
   lifecycle?: { onTimeout: { action: "pause"; keepMemory: boolean } };
   connected: string[];
   paused: string[];
@@ -42,6 +43,7 @@ function fakeClient(
   return {
     create: async (_template, options) => {
       calls.created += 1;
+      calls.secure = options.secure;
       calls.lifecycle = options.lifecycle;
       return box;
     },
@@ -137,6 +139,10 @@ test("E2B provisions agent upload, boot, health, and cleans up a failed provisio
 
     assert.equal(provisioned.computerId, "e2b-1");
     assert.equal(provisioned.controlBaseUrl, "https://agent.e2b.example.test");
+    // Agent traffic is authorized by the Runtime JWT, not an E2B edge token, so
+    // the sandbox must be created with secure disabled (browsers can't attach
+    // E2B's traffic-token header to a WS upgrade).
+    assert.equal(recorded.secure, false);
     assert.deepEqual(recorded.lifecycle, { onTimeout: { action: "pause", keepMemory: true } });
     assert.deepEqual(recorded.uploads, ["/home/runtime/runtime-agent.gz"]);
     assert.ok(recorded.commands.some(({ background }) => background));
@@ -154,7 +160,10 @@ test("E2B provisions agent upload, boot, health, and cleans up a failed provisio
     const failedCleanupBox = sandbox("e2b-cleanup-failed");
     failedCleanupBox.files.write = async () => { throw new Error("upload failed"); };
     const failedCleanupClient = fakeClient(failedCleanup, failedCleanupBox);
-    failedCleanupClient.kill = async () => false;
+    // A genuine controller failure during cleanup throws (kill returning false
+    // now means "already gone" — see the destroy tests below), so provisioning
+    // must surface both the original and the cleanup cause.
+    failedCleanupClient.kill = async () => { throw new Error("kill failed"); };
     await assert.rejects(
       new E2BRuntimeProvider(failedCleanupClient).provisionComputer({ secret: "agent-secret" }),
       /cleanup also failed for e2b-cleanup-failed/,
@@ -208,11 +217,13 @@ test("E2B treats paused computers as resumable placements and delegates lifecycl
       /E2B delete failed/,
     );
 
-    const killNotConfirmed = fakeClient(calls(), sandbox());
-    killNotConfirmed.kill = async () => false;
-    await assert.rejects(
-      new E2BRuntimeProvider(killNotConfirmed).destroyComputer("e2b-1"),
-      /did not confirm deletion/,
-    );
+    // E2B's kill returns false only for an already-removed sandbox (reaped in the
+    // window after the existence check); that is an idempotent terminal success,
+    // not a cleanup failure, so destroy must resolve rather than throw.
+    const killRaced = calls();
+    const racedClient = fakeClient(killRaced, sandbox());
+    racedClient.kill = async (id) => { killRaced.killed.push(id); return false; };
+    await new E2BRuntimeProvider(racedClient).destroyComputer("e2b-1");
+    assert.deepEqual(killRaced.killed, ["e2b-1"]);
   });
 });
