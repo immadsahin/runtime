@@ -64,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/stop", s.authed(s.stopWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/resume", s.authed(s.resumeWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/archive", s.authed(s.archiveWorkspace))
+	mux.HandleFunc("POST /workspaces/{id}/restore", s.authed(s.restoreWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
@@ -134,8 +135,20 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
-	err := s.ws.Archive(r.Context(), r.PathValue("id"))
-	respond(w, "archived", err)
+	var req protocol.ArchiveWorkspaceRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.ArchivedAt == "" || len(req.Uploads) == 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "archive requires archivedAt and upload URLs")
+		return
+	}
+	manifest, err := s.ws.Archive(r.Context(), r.PathValue("id"), req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, manifest)
 }
 
 func (s *Server) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -144,6 +157,22 @@ func (s *Server) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.ws.Destroy(r.Context(), r.PathValue("id"))
 	respond(w, "destroyed", err)
+}
+
+func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req protocol.RestoreWorkspaceRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Branch == "" || len(req.Downloads) == 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "restore requires a branch and download URLs")
+		return
+	}
+	name, err := s.ws.Restore(r.Context(), r.PathValue("id"), req)
+	respond(w, name, err)
 }
 
 // workspaceSummary serves the current WorkspaceSummary — the canonical, cross-

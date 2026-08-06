@@ -86,3 +86,18 @@ func initRepoOnBranch(t *testing.T, branch string) string {
 	run("commit", "-q", "--allow-empty", "-m", "init")
 	return dir
 }
+
+func TestValidSessionIDRejectsPathEscapes(t *testing.T) {
+	good := []string{"sess-123", "a1b2c3d4", "0e3f-9c2a"}
+	for _, id := range good {
+		if !validSessionID(id) {
+			t.Errorf("valid session id %q rejected", id)
+		}
+	}
+	bad := []string{"", ".", "..", "../x", "a/b", "a\\b", "x/../y", "..\\y"}
+	for _, id := range bad {
+		if validSessionID(id) {
+			t.Errorf("path-escaping session id %q accepted", id)
+		}
+	}
+}

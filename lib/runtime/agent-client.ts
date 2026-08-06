@@ -8,12 +8,18 @@
  */
 
 import {
+  ArchiveWorkspaceRequest,
   CreateWorkspaceRequest,
   ErrorResponse,
+  RestoreWorkspaceRequest,
   type RuntimeTokenClaims,
   WorkspaceSummary,
 } from "@/lib/runtime/agent-protocol";
 import { mintRuntimeToken } from "@/lib/runtime/runtime-token";
+import {
+  parseManifest,
+  type SnapshotManifest,
+} from "@/lib/runtime/snapshot/manifest";
 
 /** Everything needed to reach one Runtime Computer's agent. */
 export type AgentTarget = {
@@ -64,8 +70,37 @@ export class AgentClient {
     return this.post(`/workspaces/${identity.workspaceId}/resume`, identity);
   }
 
-  archiveWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/archive`, identity);
+  /**
+   * Archive the workspace: the agent produces the Snapshot artifacts and uploads
+   * them through the supplied signed URLs (manifest last), returning the manifest
+   * it assembled. Validated against the manifest schema — the same contract the
+   * db row caches — so a malformed manifest fails here, not downstream.
+   */
+  async archiveWorkspace(
+    identity: WorkspaceIdentity,
+    req: ArchiveWorkspaceRequest,
+  ): Promise<SnapshotManifest> {
+    const body = ArchiveWorkspaceRequest.parse(req);
+    const raw = await this.post(
+      `/workspaces/${identity.workspaceId}/archive`,
+      identity,
+      body,
+    );
+    return parseManifest(raw);
+  }
+
+  /**
+   * Restore an archived workspace: the agent downloads the tree + conversation
+   * via the supplied signed URLs, rebuilds and verifies the worktree, and
+   * relaunches Claude with `--continue`. Rejects (agent 500) if verification
+   * fails — Claude is not booted into a broken restore.
+   */
+  async restoreWorkspace(
+    identity: WorkspaceIdentity,
+    req: RestoreWorkspaceRequest,
+  ): Promise<unknown> {
+    const body = RestoreWorkspaceRequest.parse(req);
+    return this.post(`/workspaces/${identity.workspaceId}/restore`, identity, body);
   }
 
   destroyWorkspace(identity: WorkspaceIdentity): Promise<unknown> {

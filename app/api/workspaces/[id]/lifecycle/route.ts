@@ -2,26 +2,41 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import {
+  createWorkspaceSnapshot,
+  deleteWorkspaceSnapshots,
+  getProject,
   getRuntimeComputerByProject,
   getWorkspace,
+  listWorkspaceSnapshots,
+  markRuntimeComputerStoppedIfReady,
   readRuntimeComputerSecret,
   transitionWorkspace,
+  updateWorkspace,
 } from "@/lib/db/repositories";
+import { optionalEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { runtimeSessionEnvironment } from "@/lib/runtime/ensure-runtime-computer";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
+import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
+import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
-type LifecycleAction = "resume" | "suspend" | "destroy";
+type LifecycleAction = "resume" | "suspend" | "destroy" | "archive" | "restore";
 
 function actionFor(body: unknown): LifecycleAction | null {
   if (!body || typeof body !== "object" || !("action" in body)) return null;
   const action = body.action;
-  return action === "resume" || action === "suspend" || action === "destroy"
+  return action === "resume" ||
+    action === "suspend" ||
+    action === "destroy" ||
+    action === "archive" ||
+    action === "restore"
     ? action
     : null;
 }
@@ -89,7 +104,10 @@ export async function POST(request: Request, context: RouteContext) {
     // Handled below as a deliberately generic bad request.
   }
   if (!action) {
-    return NextResponse.json({ error: "Use resume, suspend, or destroy." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Use resume, suspend, destroy, archive, or restore." },
+      { status: 400 },
+    );
   }
 
   const { id } = await context.params;
@@ -106,6 +124,14 @@ export async function POST(request: Request, context: RouteContext) {
     return daytonaLifecycle(action, workspace, provider, owner.id);
   }
 
+  // Archive/restore operate on the runtime-agent's Session + Snapshot; only the
+  // Daytona-backed Runtime provides them. Legacy providers can't.
+  if (action === "archive" || action === "restore") {
+    return NextResponse.json(
+      { error: "Archive and restore are only supported on Runtime workspaces." },
+      { status: 409 },
+    );
+  }
   if (action === "resume") return resumeWorkspace(workspace, provider);
   if (action === "suspend") return suspendWorkspace(workspace, provider);
   return destroyWorkspace(workspace, provider);
@@ -119,7 +145,192 @@ async function daytonaLifecycle(
 ) {
   if (action === "resume") return resumeDaytonaWorkspace(workspace, provider, userId);
   if (action === "suspend") return suspendDaytonaWorkspace(workspace, provider, userId);
+  if (action === "archive") return archiveDaytonaWorkspace(workspace, provider, userId);
+  if (action === "restore") return restoreDaytonaWorkspace(workspace, provider, userId);
   return destroyDaytonaWorkspace(workspace, provider, userId);
+}
+
+/**
+ * Archive → produce a Workspace Snapshot. Next mints one signed upload URL per
+ * artifact, the agent captures + uploads them (manifest last) and returns the
+ * manifest, then Next caches it on a `workspace_snapshots` row and marks the
+ * workspace `archived`. The worktree is intentionally kept (Restore reclaims it
+ * later), so an archived workspace is revivable — not destroyed.
+ */
+async function archiveDaytonaWorkspace(
+  workspace: Workspace,
+  provider: DaytonaRuntimeProvider,
+  userId: string,
+) {
+  if (workspace.status !== "ready" && workspace.status !== "idle") {
+    return NextResponse.json(
+      { error: "Only an active workspace can be archived." },
+      { status: 409 },
+    );
+  }
+  const transitioned = await startTransition(workspace, ["ready", "idle"], "archiving");
+  if (!transitioned) return lifecycleConflict();
+
+  try {
+    const archivedAt = new Date().toISOString();
+    const { prefix, urls } = await mintSnapshotUpload(
+      supabaseSnapshotStorage(),
+      userId,
+      workspace.id,
+      archivedAt,
+    );
+    const uploads = urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
+
+    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    const manifest = await agent.archiveWorkspace(identity, { archivedAt, uploads });
+
+    await createWorkspaceSnapshot({
+      ownerId: userId,
+      workspaceId: workspace.id,
+      archivedAt,
+      storagePath: prefix,
+      manifest,
+    });
+  } catch (error) {
+    console.error(`Workspace ${workspace.id} archive failed`, error);
+    await restoreAfterFailure(workspace, "archiving", lifecycleError("archive")).catch(
+      (updateError: unknown) => console.error("Could not persist archive failure", updateError),
+    );
+    return NextResponse.json({ error: lifecycleError("archive") }, { status: 502 });
+  }
+
+  const completed = await completeTransition({
+    id: workspace.id,
+    from: "archiving",
+    patch: { status: "archived", errorMessage: null },
+  });
+  return completed
+    ? NextResponse.json({ workspace: { id: workspace.id, status: "archived" } })
+    : lifecycleReconciliationRequired("archive");
+}
+
+/**
+ * Restore → revive an archived Session from its Snapshot. Ensures a Runtime
+ * Computer for the project (provisioning one if none — NOT necessarily the
+ * original box), mints signed download URLs for the tree + conversation, and
+ * has the agent rebuild + VERIFY the worktree before relaunching Claude with
+ * `--continue`. A verification failure surfaces as an error and leaves the
+ * workspace archived rather than half-restored.
+ */
+async function restoreDaytonaWorkspace(
+  workspace: Workspace,
+  provider: DaytonaRuntimeProvider,
+  userId: string,
+) {
+  if (workspace.status !== "archived") {
+    return NextResponse.json(
+      { error: "Only an archived workspace can be restored." },
+      { status: 409 },
+    );
+  }
+  const snapshot = (await listWorkspaceSnapshots(workspace.id))[0];
+  if (!snapshot) {
+    return NextResponse.json(
+      { error: "This workspace has no Snapshot to restore." },
+      { status: 409 },
+    );
+  }
+  const transitioned = await startTransition(workspace, ["archived"], "restoring");
+  if (!transitioned) return lifecycleConflict();
+
+  try {
+    const project = await getProject(workspace.projectId);
+    if (!project) throw new Error("Project not found for restore.");
+    const githubToken = optionalEnv("GITHUB_PAT");
+
+    // Manifest pointers -> signed download URLs for exactly what the agent needs.
+    const storage = supabaseSnapshotStorage();
+    const { manifest, storagePath } = snapshot;
+    const downloads = await Promise.all(
+      (
+        [
+          { artifact: "bundle", file: manifest.tree.bundle },
+          { artifact: "patch", file: manifest.tree.patch },
+          { artifact: "conversation", file: manifest.conversation },
+        ] as const
+      ).map(async ({ artifact, file }) => ({
+        artifact,
+        url: await mintSnapshotDownloadUrl(storage, `${storagePath}${file}`, userId),
+      })),
+    );
+
+    // If the project's persisted box is marked ready but its Daytona sandbox has
+    // vanished, release the stale claim first so ensure provisions a replacement
+    // — otherwise restore would fail instead of rebuilding on a fresh box (the
+    // whole point of portable Restore). Mirrors the create flow.
+    const currentComputer = await getRuntimeComputerByProject(project.id);
+    if (
+      currentComputer?.status === "ready" &&
+      currentComputer.daytonaSandboxId &&
+      !(await provider.computerAlive(currentComputer.daytonaSandboxId))
+    ) {
+      await markRuntimeComputerStoppedIfReady(
+        currentComputer.id,
+        currentComputer.daytonaSandboxId,
+      );
+    }
+
+    // Ensure a box (any) and refresh its mirror before the agent branches from
+    // the bundle. Matches the create flow's lazy-provision path.
+    const ensured = await ensureProjectRuntimeComputer(provider, {
+      projectId: project.id,
+      repoFullName: project.fullName,
+      githubToken,
+      sessionEnv: runtimeSessionEnvironment(),
+    });
+    const computer = ensured.computer;
+    if (!computer.daytonaSandboxId) {
+      throw new Error("Ready Runtime Computer has no Daytona sandbox id.");
+    }
+    if (!ensured.provisioned) {
+      await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
+    }
+
+    const target = await provider.agentTarget(
+      computer.daytonaSandboxId,
+      ensured.agentSecret,
+    );
+    const identity: WorkspaceIdentity = {
+      workspaceId: workspace.id,
+      projectId: project.id,
+      computerId: computer.id,
+      userId,
+    };
+    await new AgentClient(target).restoreWorkspace(identity, {
+      branch: workspace.branch,
+      baseBranch: project.defaultBranch,
+      sessionId: manifest.sessionId,
+      downloads,
+    });
+
+    // Persist the (possibly new) box + session linkage now that the agent has
+    // rebuilt and verified the worktree.
+    await updateWorkspace(workspace.id, {
+      computerId: computer.id,
+      tmuxSession: `ws-${workspace.id}`,
+      agentWorkspaceId: workspace.id,
+    });
+  } catch (error) {
+    console.error(`Workspace ${workspace.id} restore failed`, error);
+    await restoreAfterFailure(workspace, "restoring", lifecycleError("restore")).catch(
+      (updateError: unknown) => console.error("Could not persist restore failure", updateError),
+    );
+    return NextResponse.json({ error: lifecycleError("restore") }, { status: 502 });
+  }
+
+  const completed = await completeTransition({
+    id: workspace.id,
+    from: "restoring",
+    patch: { status: "ready", errorMessage: null, touchActive: true },
+  });
+  return completed
+    ? NextResponse.json({ workspace: { id: workspace.id, status: "ready" } })
+    : lifecycleReconciliationRequired("restore");
 }
 
 async function daytonaAgent(
@@ -216,7 +427,7 @@ async function destroyDaytonaWorkspace(
   provider: DaytonaRuntimeProvider,
   userId: string,
 ) {
-  const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "failed"];
+  const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "archived", "failed"];
   if (!destroyable.includes(workspace.status)) {
     return NextResponse.json(
       { error: "This workspace cannot be destroyed while another lifecycle action is running." },
@@ -225,16 +436,24 @@ async function destroyDaytonaWorkspace(
   }
   const transitioned = await startTransition(workspace, destroyable, "destroying");
   if (!transitioned) return lifecycleConflict();
+
+  // Best-effort worktree teardown: destroy is terminal, and the shared box may
+  // already be gone (e.g. destroying an ARCHIVED workspace whose Runtime Computer
+  // was reclaimed). A missing/failed agent must not block the durable cleanup.
   try {
     const { agent, identity } = await daytonaAgent(workspace, provider, userId);
     await agent.destroyWorkspace(identity);
   } catch (error) {
-    console.error(`Workspace ${workspace.id} destroy failed`, error);
-    await restoreAfterFailure(workspace, "destroying", lifecycleError("destroy")).catch(
-      (updateError: unknown) => console.error("Could not persist destroy failure", updateError),
-    );
-    return NextResponse.json({ error: lifecycleError("destroy") }, { status: 502 });
+    console.warn(`Workspace ${workspace.id} agent teardown skipped`, error);
   }
+
+  // Drop the Snapshot index rows: the workspace row is marked destroyed rather
+  // than deleted, so the FK cascade never fires — remove them explicitly so a
+  // destroyed workspace retains no replay metadata.
+  await deleteWorkspaceSnapshots(workspace.id).catch((error: unknown) =>
+    console.error(`Could not delete snapshots for ${workspace.id}`, error),
+  );
+
   const completed = await completeTransition({
     id: workspace.id,
     from: "destroying",
@@ -344,7 +563,7 @@ async function suspendWorkspace(workspace: Workspace, provider: RuntimeProvider)
 }
 
 async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider) {
-  const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "failed"];
+  const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "archived", "failed"];
   if (!destroyable.includes(workspace.status)) {
     return NextResponse.json(
       { error: "This workspace cannot be destroyed while another lifecycle action is running." },

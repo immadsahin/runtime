@@ -1,34 +1,53 @@
 "use client";
 
-import { LoaderCircle, Pause, Play, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  History,
+  LoaderCircle,
+  Pause,
+  Play,
+  Trash2,
+} from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
-import type { WorkspaceStatus } from "@/lib/runtime/types";
+import type { ProviderName, WorkspaceStatus } from "@/lib/runtime/types";
 
-type LifecycleAction = "resume" | "suspend" | "destroy";
+type LifecycleAction = "resume" | "suspend" | "destroy" | "archive" | "restore";
 
 const actionLabels: Record<LifecycleAction, string> = {
   resume: "Resume workspace",
   suspend: "Suspend workspace",
   destroy: "Destroy workspace",
+  archive: "Archive workspace",
+  restore: "Restore workspace",
 };
 
 export function WorkspaceLifecycleControls({
   workspaceId,
   status,
+  provider,
 }: {
   workspaceId: string;
   status: WorkspaceStatus;
+  provider: ProviderName;
 }) {
   const router = useRouter();
   const [message, setMessage] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<LifecycleAction | null>(null);
   const [isPending, startTransition] = useTransition();
+  // Archive/Restore/Replay are backed by the runtime-agent's Session + Snapshot,
+  // which only the Daytona-backed Runtime provides. Hide them elsewhere so a
+  // legacy/local workspace never shows a control that always fails with a 409.
+  const isRuntime = provider === "daytona";
   const canSuspend = status === "ready" || status === "idle";
   const canResume = status === "suspended";
-  const canDestroy = canSuspend || canResume || status === "failed";
+  const canArchive = isRuntime && (status === "ready" || status === "idle");
+  const isArchived = status === "archived";
+  const canDestroy = canSuspend || canResume || isArchived || status === "failed";
 
   function perform(action: LifecycleAction) {
     if (
@@ -62,7 +81,7 @@ export function WorkspaceLifecycleControls({
     });
   }
 
-  if (!canSuspend && !canResume && !canDestroy) {
+  if (!canSuspend && !canResume && !canArchive && !canDestroy && !isArchived) {
     return (
       <p className="text-muted-foreground text-xs">
         Lifecycle controls are unavailable while this workspace is {status.replaceAll("_", " ")}.
@@ -87,6 +106,25 @@ export function WorkspaceLifecycleControls({
             {waiting("suspend") ? "Suspending" : "Suspend"}
           </Button>
         )}
+        {canArchive && (
+          <Button disabled={isPending} onClick={() => perform("archive")} size="sm" variant="outline">
+            {waiting("archive") ? <LoaderCircle className="animate-spin" /> : <Archive />}
+            {waiting("archive") ? "Archiving" : "Archive"}
+          </Button>
+        )}
+        {isArchived && (
+          <Button disabled={isPending} onClick={() => perform("restore")} size="sm">
+            {waiting("restore") ? <LoaderCircle className="animate-spin" /> : <ArchiveRestore />}
+            {waiting("restore") ? "Restoring" : "Restore"}
+          </Button>
+        )}
+        {isArchived && (
+          <Button asChild size="sm" variant="outline">
+            <Link href={`/workspaces/${workspaceId}/replay`}>
+              <History /> Replay
+            </Link>
+          </Button>
+        )}
         {canDestroy && (
           <Button disabled={isPending} onClick={() => perform("destroy")} size="sm" variant="destructive">
             {waiting("destroy") ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
@@ -100,9 +138,11 @@ export function WorkspaceLifecycleControls({
         </p>
       )}
       <p className="text-muted-foreground text-xs">
-        {canResume
-          ? "Resuming starts fresh compute attached to this workspace’s persistent storage."
-          : "Suspending stops compute but keeps the repository and worktree in persistent storage."}
+        {isArchived
+          ? "Archived. Replay reads the Snapshot from storage (no box); Restore rebuilds a live session from it on a fresh Runtime Computer."
+          : canResume
+            ? "Resuming starts fresh compute attached to this workspace’s persistent storage."
+            : "Archiving captures a durable Snapshot (terminal, conversation, and git tree); suspending just stops compute."}
       </p>
     </div>
   );
