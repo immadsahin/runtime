@@ -82,6 +82,26 @@ type ArchiveWorkspaceRequest struct {
 	Uploads    []ArchiveUpload `json:"uploads"`
 }
 
+// RestoreDownload is one signed download URL for a Snapshot artifact the agent
+// needs to rebuild a Session: `artifact` is one of bundle/patch/conversation.
+type RestoreDownload struct {
+	Artifact string `json:"artifact"`
+	URL      string `json:"url"`
+}
+
+// RestoreWorkspaceRequest carries what the agent needs to rebuild an archived
+// Session on a (possibly fresh) box: the branch to check out, the Claude
+// sessionId to place the conversation under so `claude --continue` resumes the
+// exact session, and signed download URLs for the tree (bundle + patch) and the
+// conversation JSONL. The agent materializes, VERIFIES, and only then relaunches
+// Claude — a failed verification aborts without booting Claude.
+type RestoreWorkspaceRequest struct {
+	Branch     string            `json:"branch"`
+	BaseBranch string            `json:"baseBranch,omitempty"`
+	SessionID  *string           `json:"sessionId"`
+	Downloads  []RestoreDownload `json:"downloads"`
+}
+
 // ErrorResponse is the stable error envelope for control-plane failures.
 type ErrorResponse struct {
 	Error struct {

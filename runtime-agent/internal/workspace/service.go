@@ -252,6 +252,46 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	})
 }
 
+// Restore rebuilds an archived Session from its Snapshot and relaunches Claude
+// with `claude --continue`. The agent materializes + VERIFIES the worktree
+// before booting Claude (M4 invariant #4); a verification failure returns an
+// error and Claude is never started. The box need not be the original one —
+// everything is rebuilt from the Snapshot's tree + conversation (portability).
+func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.RestoreWorkspaceRequest) (string, error) {
+	if req.SessionID == nil || *req.SessionID == "" {
+		return "", fmt.Errorf("cannot restore: snapshot has no Claude session id")
+	}
+	worktree := s.worktreePath(workspaceID)
+	convDest, err := s.conversationDest(worktree, *req.SessionID)
+	if err != nil {
+		return "", err
+	}
+	if err := snapshot.Materialize(ctx, snapshot.MaterializeInput{
+		MirrorPath:       s.mirrorPath(),
+		WorktreePath:     worktree,
+		Branch:           req.Branch,
+		ConversationDest: convDest,
+		Downloads:        req.Downloads,
+	}); err != nil {
+		return "", err
+	}
+	// Verified — safe to boot Claude. Record the facts the orientation prompt
+	// needs, then relaunch with --continue against the restored session.
+	s.setFacts(workspaceID, req.Branch, req.BaseBranch)
+	return s.Resume(ctx, workspaceID, "")
+}
+
+// conversationDest is where the restored conversation JSONL must be written so
+// `claude --continue` finds the archived session: Claude's per-project log path
+// for this worktree, named by the session id.
+func (s *Service) conversationDest(worktree, sessionID string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".claude", "projects", claudeSlug(worktree), sessionID+".jsonl"), nil
+}
+
 // sessionID returns the Claude session id for `claude --continue` on Restore —
 // the JSONL basename without extension — or nil when Claude never wrote a log.
 func (s *Service) sessionID(workspaceID string) *string {
