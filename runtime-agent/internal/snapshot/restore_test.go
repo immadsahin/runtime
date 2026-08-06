@@ -42,10 +42,17 @@ func archivedRepo(t *testing.T) (bundle, patch string) {
 	run("commit", "-q", "-m", "base")
 	run("checkout", "-q", "-b", "feature")
 	write("file.txt", "feature\n")
+	if err := os.WriteFile(filepath.Join(dir, "logo.bin"), []byte{0x00, 0x01, 0x02, 0xff}, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	run("add", "-A")
 	run("commit", "-q", "-m", "feature")
-	// WIP on top of the feature commit: a tracked edit + an untracked file.
+	// WIP on top of the feature commit: a tracked text edit, a tracked BINARY
+	// edit, and an untracked file — all must round-trip through Restore.
 	write("file.txt", "feature wip\n")
+	if err := os.WriteFile(filepath.Join(dir, "logo.bin"), []byte{0x00, 0x01, 0x02, 0xff, 0xfe, 0x7f}, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	write("new.txt", "fresh\n")
 
 	staging := t.TempDir()
@@ -133,6 +140,10 @@ func TestMaterializeRebuildsWorktreeFromBundleAndPatch(t *testing.T) {
 	if got := readFile(t, filepath.Join(worktree, "new.txt")); got != "fresh\n" {
 		t.Fatalf("new.txt = %q, want %q", got, "fresh\n")
 	}
+	// The tracked BINARY edit round-tripped through `git diff --binary` + apply.
+	if got := readFile(t, filepath.Join(worktree, "logo.bin")); got != string([]byte{0x00, 0x01, 0x02, 0xff, 0xfe, 0x7f}) {
+		t.Fatalf("logo.bin binary WIP not restored: %x", got)
+	}
 	// The conversation JSONL was placed where `claude --continue` will find it.
 	if got := readFile(t, convDest); got != conversation {
 		t.Fatalf("conversation not placed: %q", got)
@@ -177,6 +188,29 @@ func TestMaterializeRequiresBundleAndPatchURLs(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "missing the patch") {
 		t.Fatalf("expected missing-patch error, got %v", err)
+	}
+}
+
+func TestMaterializeRequiresConversationWhenDestinationSet(t *testing.T) {
+	bundle, patch := archivedRepo(t)
+	srv := artifactServer(t, map[string]string{
+		"/bundle": readFile(t, bundle),
+		"/patch":  readFile(t, patch),
+	})
+	// ConversationDest is set but no conversation URL is supplied — restore must
+	// fail closed rather than boot `claude --continue` with no session JSONL.
+	err := Materialize(context.Background(), MaterializeInput{
+		MirrorPath:       bareMirror(t),
+		WorktreePath:     filepath.Join(t.TempDir(), "ws"),
+		Branch:           "feature",
+		ConversationDest: filepath.Join(t.TempDir(), "sess.jsonl"),
+		Downloads: []protocol.RestoreDownload{
+			{Artifact: "bundle", URL: srv.URL + "/bundle"},
+			{Artifact: "patch", URL: srv.URL + "/patch"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing the conversation") {
+		t.Fatalf("expected missing-conversation error, got %v", err)
 	}
 }
 

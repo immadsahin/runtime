@@ -42,9 +42,17 @@ func Materialize(ctx context.Context, in MaterializeInput) error {
 	for _, d := range in.Downloads {
 		urls[d.Artifact] = d.URL
 	}
-	for _, required := range []string{"bundle", "patch"} {
-		if urls[required] == "" {
-			return fmt.Errorf("restore is missing the %s download URL", required)
+	required := []string{"bundle", "patch"}
+	// When a conversation destination is set (it always is for a real restore),
+	// the conversation URL is mandatory — otherwise Claude would `--continue` with
+	// no session JSONL, an incomplete restore. Fail closed rather than silently
+	// booting into a session that can't resume.
+	if in.ConversationDest != "" {
+		required = append(required, "conversation")
+	}
+	for _, name := range required {
+		if urls[name] == "" {
+			return fmt.Errorf("restore is missing the %s download URL", name)
 		}
 	}
 
@@ -77,9 +85,12 @@ func Materialize(ctx context.Context, in MaterializeInput) error {
 		return err
 	}
 
-	if in.ConversationDest != "" && urls["conversation"] != "" {
+	if in.ConversationDest != "" {
 		if err := download(ctx, urls["conversation"], in.ConversationDest); err != nil {
 			return fmt.Errorf("download conversation: %w", err)
+		}
+		if info, err := os.Stat(in.ConversationDest); err != nil || info.Size() == 0 {
+			return fmt.Errorf("restore: conversation JSONL was not written to %s", in.ConversationDest)
 		}
 	}
 
@@ -145,13 +156,15 @@ func applyPatch(ctx context.Context, worktree, patchPath string) error {
 // verify asserts the restore gates before Claude is launched: the branch was
 // imported into the mirror and the worktree has a valid HEAD.
 func verify(ctx context.Context, mirror, worktree, branch string) error {
-	if err := exec.CommandContext(ctx, "git", "-C", mirror,
-		"rev-parse", "--verify", "refs/heads/"+branch).Run(); err != nil {
-		return fmt.Errorf("verify: branch %q missing after bundle import", branch)
+	if out, err := exec.CommandContext(ctx, "git", "-C", mirror,
+		"rev-parse", "--verify", "refs/heads/"+branch).CombinedOutput(); err != nil {
+		return fmt.Errorf("verify: branch %q missing after bundle import: %v: %s",
+			branch, err, strings.TrimSpace(string(out)))
 	}
-	if err := exec.CommandContext(ctx, "git", "-C", worktree,
-		"rev-parse", "--verify", "HEAD").Run(); err != nil {
-		return fmt.Errorf("verify: worktree has no valid HEAD")
+	if out, err := exec.CommandContext(ctx, "git", "-C", worktree,
+		"rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+		return fmt.Errorf("verify: worktree has no valid HEAD: %v: %s",
+			err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

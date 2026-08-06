@@ -20,25 +20,30 @@ var httpClient = http.DefaultClient
 // artifacts. Every non-manifest artifact must have a local file; a requested
 // artifact we don't recognize is an error rather than a silent skip.
 func uploadAll(ctx context.Context, uploads []protocol.ArchiveUpload, paths map[string]string) error {
-	var manifest *protocol.ArchiveUpload
-	for i := range uploads {
-		up := uploads[i]
-		if up.Artifact == "manifest" {
-			manifest = &up
-			continue
-		}
-		path, ok := paths[up.Artifact]
-		if !ok {
+	// Every artifact must have an upload URL BEFORE we push anything — otherwise a
+	// request carrying only some URLs could write a manifest that points at absent
+	// objects, persisting an incomplete Snapshot that Replay/Restore can't read.
+	byArtifact := map[string]string{}
+	for _, up := range uploads {
+		if _, ok := artifactFile[up.Artifact]; !ok {
 			return fmt.Errorf("upload requested for unknown artifact %q", up.Artifact)
 		}
-		if err := putFile(ctx, up.URL, path); err != nil {
-			return fmt.Errorf("upload %s: %w", up.Artifact, err)
+		byArtifact[up.Artifact] = up.URL
+	}
+	for artifact := range artifactFile {
+		if byArtifact[artifact] == "" {
+			return fmt.Errorf("archive request is missing the %s upload URL", artifact)
 		}
 	}
-	if manifest == nil {
-		return fmt.Errorf("archive request is missing the manifest upload URL")
+
+	// Payload artifacts first; the manifest LAST — its arrival marks the Snapshot
+	// complete, so it must never precede an artifact it points at.
+	for _, artifact := range payloadArtifacts {
+		if err := putFile(ctx, byArtifact[artifact], paths[artifact]); err != nil {
+			return fmt.Errorf("upload %s: %w", artifact, err)
+		}
 	}
-	if err := putFile(ctx, manifest.URL, paths["manifest"]); err != nil {
+	if err := putFile(ctx, byArtifact["manifest"], paths["manifest"]); err != nil {
 		return fmt.Errorf("upload manifest: %w", err)
 	}
 	return nil
@@ -72,5 +77,8 @@ func putFile(ctx context.Context, url, path string) error {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
 	}
+	// Drain the body so the transport can reuse the connection for the next of the
+	// six sequential uploads (avoids a fresh TLS handshake per artifact).
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }

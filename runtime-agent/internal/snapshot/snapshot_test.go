@@ -270,3 +270,30 @@ func TestProduceRequiresManifestUpload(t *testing.T) {
 		t.Fatalf("expected missing-manifest error, got %v", err)
 	}
 }
+
+func TestProduceRequiresEveryPayloadArtifact(t *testing.T) {
+	worktree := gitRepoWithWIP(t)
+	srv := newUploadServer()
+	defer srv.Close()
+
+	// Every artifact EXCEPT summary — Produce must refuse before uploading, so an
+	// incomplete Snapshot is never marked complete by a manifest that points at a
+	// missing object.
+	var uploads []protocol.ArchiveUpload
+	for _, u := range allArtifactUploads(srv.URL) {
+		if u.Artifact != "summary" {
+			uploads = append(uploads, u)
+		}
+	}
+	_, err := Produce(context.Background(), Input{
+		WorkspaceID: "ws-5", Worktree: worktree,
+		Summary:    protocol.WorkspaceSummary{StartedAt: "2026-08-06T00:00:00Z"},
+		ArchivedAt: "2026-08-06T00:00:00Z", Uploads: uploads,
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing the summary") {
+		t.Fatalf("expected missing-summary error, got %v", err)
+	}
+	if len(srv.order) != 0 {
+		t.Fatalf("nothing should upload when an artifact is missing, got %v", srv.order)
+	}
+}

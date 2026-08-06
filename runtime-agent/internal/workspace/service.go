@@ -261,6 +261,11 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	if req.SessionID == nil || *req.SessionID == "" {
 		return "", fmt.Errorf("cannot restore: snapshot has no Claude session id")
 	}
+	// The session id becomes a filename under ~/.claude/projects/<slug>/; reject
+	// anything that could escape that directory (path separators, traversal).
+	if !validSessionID(*req.SessionID) {
+		return "", fmt.Errorf("cannot restore: invalid session id %q", *req.SessionID)
+	}
 	worktree := s.worktreePath(workspaceID)
 	convDest, err := s.conversationDest(worktree, *req.SessionID)
 	if err != nil {
@@ -279,6 +284,17 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	// needs, then relaunch with --continue against the restored session.
 	s.setFacts(workspaceID, req.Branch, req.BaseBranch)
 	return s.Resume(ctx, workspaceID, "")
+}
+
+// validSessionID guards the session id before it is used as a path segment. A
+// Claude session id is a plain filename (uuid-like); anything with a path
+// separator or traversal is rejected so a malicious manifest can't write outside
+// the project directory.
+func validSessionID(id string) bool {
+	if id == "" || id == "." || id == ".." {
+		return false
+	}
+	return !strings.ContainsAny(id, "/\\") && !strings.Contains(id, "..")
 }
 
 // conversationDest is where the restored conversation JSONL must be written so
@@ -308,8 +324,11 @@ func (s *Service) sessionID(workspaceID string) *string {
 
 // startRecorder begins capturing the workspace's tmux pane to its cast file.
 // Best-effort: recording must never block a session start, so a failure is
-// swallowed (the archive later stages an empty cast if none was produced).
+// swallowed (the archive later stages an empty cast if none was produced). Any
+// recorder already running for this workspace is finalized first (e.g. a Resume
+// after Claude exited without a Stop) so its goroutine + FIFO don't leak.
 func (s *Service) startRecorder(ctx context.Context, workspaceID string) {
+	s.stopRecorder(ctx, workspaceID)
 	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{})
 	s.recordersMu.Lock()
 	s.recorders[workspaceID] = rec
