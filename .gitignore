@@ -43,5 +43,6 @@ next-env.d.ts
 # agent scratch artifacts (screenshots, recordings, and uploaded attachments)
 /artifacts/
 /.artifacts/
+/.context/build/
 /.hoplite/attachments/
 /.hoplite/archive/

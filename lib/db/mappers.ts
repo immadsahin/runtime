@@ -13,7 +13,7 @@ import type {
 
 type Tables = Database["public"]["Tables"];
 
-const PROVIDERS: readonly ProviderName[] = ["local", "modal", "daytona"];
+const PROVIDERS: readonly ProviderName[] = ["local", "modal", "daytona", "e2b"];
 
 /** Narrow the free-text `provider` column to a known backend (defaults local). */
 function toProviderName(value: string): ProviderName {
@@ -95,9 +95,13 @@ export function toRuntimeComputer(
   return {
     id: row.id,
     projectId: row.project_id,
+    provider: row.compute_provider === "e2b" ? "e2b" : "daytona",
+    placementKey: row.placement_key ?? `project:${row.project_id}`,
+    topology: row.topology ?? "shared",
     status: row.status,
     imageVersion: row.image_version,
-    daytonaSandboxId: row.daytona_sandbox_id,
+    providerComputerId: row.provider_computer_id ?? row.daytona_sandbox_id,
+    daytonaSandboxId: row.provider_computer_id ?? row.daytona_sandbox_id,
     agentBaseUrl: row.agent_base_url,
     provisionTimings: toProvisionTimings(row.provision_timings),
     errorMessage: row.error_message,

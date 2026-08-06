@@ -17,8 +17,9 @@ workflow, but the session lives in the cloud, not on your machine.
 
 ## Status
 
-Phase 0 (architecture validated end-to-end on Daytona) and Milestone 1
-(foundations) are complete; the interactive execution path is in progress. See
+Phase 0–2 are complete. M3 Workspace Session and M4 Archive / Replay / Restore
+are implemented and locally verified; their authenticated real-Daytona
+acceptance runs and Runtime-only dogfood gate remain. See the canonical
 [`docs/architecture/PROGRESS.md`](docs/architecture/PROGRESS.md).
 
 ## Local setup
@@ -36,3 +37,4 @@ Read/write**. Keep it out of `NEXT_PUBLIC_*` and commits.
 - Architecture — [`docs/architecture/runtime-v1-plan.md`](docs/architecture/runtime-v1-plan.md)
 - Agent & protocol — [`runtime-agent.md`](docs/architecture/runtime-agent.md), [`protocol.md`](docs/architecture/protocol.md)
 - Validation report — [`spike4-runtime-report.md`](docs/architecture/spike4-runtime-report.md)
+- E2B provider research and verification gate — [`e2b-provider-spike.md`](docs/architecture/e2b-provider-spike.md)

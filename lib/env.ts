@@ -29,6 +29,10 @@ type EnvKey =
   | "DAYTONA_API_URL"
   | "DAYTONA_TARGET"
   | "DAYTONA_SNAPSHOT"
+  // E2B (isolated Runtime Computer backend)
+  | "E2B_API_KEY"
+  | "E2B_TEMPLATE"
+  | "E2B_SANDBOX_TIMEOUT_MS"
   // Cross-compiled runtime-agent binary uploaded on provision (decision 1A).
   | "RUNTIME_AGENT_BINARY_PATH"
   // Claude Code
@@ -58,10 +62,15 @@ export function requireEnv(key: EnvKey): string {
 /** Which RuntimeProvider implementation to use. */
 export function providerName(): ProviderName {
   const provider = optionalEnv("RUNTIME_PROVIDER") ?? "local";
-  if (provider === "local" || provider === "modal" || provider === "daytona") {
+  if (
+    provider === "local" ||
+    provider === "modal" ||
+    provider === "daytona" ||
+    provider === "e2b"
+  ) {
     return provider;
   }
   throw new Error(
-    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", or "daytona".`,
+    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", "daytona", or "e2b".`,
   );
 }

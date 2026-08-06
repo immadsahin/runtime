@@ -4,7 +4,7 @@ import { getOwner } from "@/lib/auth/owner";
 import {
   createWorkspacePullRequest,
   getProject,
-  getRuntimeComputerByProject,
+  getRuntimeComputer,
   getWorkspace,
   getWorkspacePullRequest,
 } from "@/lib/db/repositories";
@@ -15,8 +15,11 @@ import {
   verifyTokenOwner,
 } from "@/lib/github/client";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
-import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import {
+  isComputeRuntimeProvider,
+  providerErrorResponse,
+  resolveProvider,
+} from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -75,8 +78,8 @@ export async function POST(request: Request, context: RouteContext) {
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);
   const provider = resolution.provider;
-  const isDaytona = provider instanceof DaytonaRuntimeProvider;
-  if (!isDaytona && !workspace.sandboxId) {
+  const isComputer = isComputeRuntimeProvider(provider);
+  if (!isComputer && !workspace.sandboxId) {
     return NextResponse.json(
       { error: "The workspace must be ready before it can be published." },
       { status: 409 },
@@ -106,21 +109,29 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    if (isDaytona) {
-      const computer = await getRuntimeComputerByProject(workspace.projectId);
-      if (!computer?.daytonaSandboxId || !workspace.worktreePath) {
+    if (isComputer) {
+      const computer = workspace.computerId
+        ? await getRuntimeComputer(workspace.computerId)
+        : null;
+      if (
+        !computer ||
+        computer.projectId !== workspace.projectId ||
+        computer.provider !== workspace.provider ||
+        !computer.providerComputerId ||
+        !workspace.worktreePath
+      ) {
         return NextResponse.json(
           { error: "The interactive worktree is not available yet." },
           { status: 409 },
         );
       }
       const changed = await provider.listWorkspaceChangedFiles(
-        computer.daytonaSandboxId,
+        computer.providerComputerId,
         workspace.worktreePath,
       );
       if (changed.length > 0) {
         await provider.commitWorkspaceChanges(
-          computer.daytonaSandboxId,
+          computer.providerComputerId,
           workspace.worktreePath,
           {
             message: title,
@@ -132,7 +143,7 @@ export async function POST(request: Request, context: RouteContext) {
         );
       }
       await provider.pushWorkspaceChanges(
-        computer.daytonaSandboxId,
+        computer.providerComputerId,
         workspace.worktreePath,
         {
           repoFullName: project.fullName,

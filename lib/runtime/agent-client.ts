@@ -20,19 +20,9 @@ import {
   parseManifest,
   type SnapshotManifest,
 } from "@/lib/runtime/snapshot/manifest";
+import type { AgentTarget } from "@/lib/runtime/compute-provider";
 
-/** Everything needed to reach one Runtime Computer's agent. */
-export type AgentTarget = {
-  /** Standard preview URL base for control calls, e.g.
-   *  `https://8080-<sandboxId>.daytonaproxy01.net`. */
-  controlBaseUrl: string;
-  /** Daytona preview token for the control base (sent as a header). */
-  daytonaPreviewToken: string;
-  /** Signed preview URL base for the browser WS (token already in the host). */
-  signedWsBaseUrl: string;
-  /** Per-computer Runtime secret used to mint Runtime tokens. */
-  secret: string;
-};
+export type { AgentTarget } from "@/lib/runtime/compute-provider";
 
 /** The authorized identity for a workspace connection (exp is filled by mint). */
 export type WorkspaceIdentity = Omit<RuntimeTokenClaims, "exp">;
@@ -119,11 +109,10 @@ export class AgentClient {
 
   /**
    * The `wss://` URL the browser opens for the live terminal: the signed
-   * Daytona preview host (token in the subdomain, so no headers) plus a short
-   * Runtime token the agent verifies.
+   * provider browser endpoint plus a short Runtime token the agent verifies.
    */
   ptyUrl(identity: WorkspaceIdentity): string {
-    const base = this.target.signedWsBaseUrl
+    const base = this.target.browserBaseUrl
       .replace(/^http/, "ws")
       .replace(/\/$/, "");
     const token = mintRuntimeToken(identity, this.target.secret);
@@ -132,15 +121,15 @@ export class AgentClient {
 
   /**
    * The `https://` URL the browser opens for the Conversation event stream
-   * (SSE). Same signed host as {@link ptyUrl}, same short-lived Runtime token,
-   * but plain HTTP because SSE requires a normal fetch — not a WS upgrade.
+   * (SSE). Same browser endpoint as {@link ptyUrl}, same short-lived Runtime
+   * token, but plain HTTP because SSE requires a normal fetch — not a WS upgrade.
    *
    * EventSource resends `Last-Event-ID` automatically on transient reconnects;
    * programmatic reconnects (after token refresh) should append
    * `?lastEventId=<seq>` — the agent honors either.
    */
   eventsUrl(identity: WorkspaceIdentity): string {
-    const base = this.target.signedWsBaseUrl.replace(/\/$/, "");
+    const base = this.target.browserBaseUrl.replace(/\/$/, "");
     const token = mintRuntimeToken(identity, this.target.secret);
     return `${base}/events?token=${encodeURIComponent(token)}`;
   }
@@ -171,7 +160,7 @@ export class AgentClient {
         headers: {
           ...(body !== undefined && { "content-type": "application/json" }),
           authorization: `Bearer ${token}`,
-          "x-daytona-preview-token": this.target.daytonaPreviewToken,
+          ...this.target.controlHeaders,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
       },

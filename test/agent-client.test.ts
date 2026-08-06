@@ -5,9 +5,9 @@ import { AgentClient, type AgentTarget } from "@/lib/runtime/agent-client";
 import { verifyRuntimeToken } from "@/lib/runtime/runtime-token";
 
 const target: AgentTarget = {
-  controlBaseUrl: "https://8080-sbx.daytonaproxy01.net",
-  daytonaPreviewToken: "dt-preview-token",
-  signedWsBaseUrl: "https://8080-signed.daytonaproxy01.net",
+  controlBaseUrl: "https://control.example.test",
+  controlHeaders: { "x-compute-control-token": "control-token" },
+  browserBaseUrl: "https://browser.example.test",
   secret: "computer-secret",
 };
 
@@ -36,10 +36,10 @@ test("createWorkspace posts a valid body with a verifiable Runtime token", async
   );
 
   assert.equal(out.worktree, "/home/runtime/ws/ws-1");
-  assert.equal(seenUrl, "https://8080-sbx.daytonaproxy01.net/workspaces");
+  assert.equal(seenUrl, "https://control.example.test/workspaces");
   const headers = seenHeaders;
-  // The Daytona preview header and a valid Runtime token must both be present.
-  assert.equal(headers["x-daytona-preview-token"], "dt-preview-token");
+  // Provider control headers and a valid Runtime token must both be present.
+  assert.equal(headers["x-compute-control-token"], "control-token");
   const bearer = headers["authorization"].replace("Bearer ", "");
   assert.equal(verifyRuntimeToken(bearer, target.secret).workspaceId, "ws-1");
 });
@@ -96,7 +96,7 @@ test("archiveWorkspace posts the archive body and parses the manifest", async ()
     uploads,
   });
 
-  assert.equal(seenUrl, "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/archive");
+  assert.equal(seenUrl, "https://control.example.test/workspaces/ws-1/archive");
   assert.deepEqual(seenBody, { archivedAt: "2026-08-06T00:05:00Z", uploads });
   assert.equal(out.workspaceId, "ws-1");
   assert.equal(out.tree.kind, "git-bundle+patch");
@@ -156,7 +156,7 @@ test("restoreWorkspace posts branch, sessionId, and download URLs", async () => 
     ],
   });
 
-  assert.equal(seenUrl, "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/restore");
+  assert.equal(seenUrl, "https://control.example.test/workspaces/ws-1/restore");
   assert.deepEqual(seenBody, {
     branch: "feat/x",
     baseBranch: "main",
@@ -186,11 +186,11 @@ test("restoreWorkspace rejects an invalid request body before calling the agent"
   assert.equal(called, false);
 });
 
-test("ptyUrl builds a wss signed-preview URL carrying a Runtime token", () => {
+test("ptyUrl builds a wss browser URL carrying a Runtime token", () => {
   const client = new AgentClient(target);
   const url = new URL(client.ptyUrl(identity));
   assert.equal(url.protocol, "wss:");
-  assert.equal(url.host, "8080-signed.daytonaproxy01.net");
+  assert.equal(url.host, "browser.example.test");
   assert.equal(url.pathname, "/pty");
   assert.equal(
     verifyRuntimeToken(url.searchParams.get("token")!, target.secret).workspaceId,

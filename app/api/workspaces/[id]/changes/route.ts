@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getRuntimeComputerByProject, getWorkspace } from "@/lib/db/repositories";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { getRuntimeComputer, getWorkspace } from "@/lib/db/repositories";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
+import { isComputeRuntimeProvider } from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -36,9 +36,17 @@ export async function GET(request: Request, context: RouteContext) {
   const path = new URL(request.url).searchParams.get("path");
 
   try {
-    if (provider instanceof DaytonaRuntimeProvider) {
-      const computer = await getRuntimeComputerByProject(workspace.projectId);
-      if (!computer?.daytonaSandboxId || !workspace.worktreePath) {
+    if (isComputeRuntimeProvider(provider)) {
+      const computer = workspace.computerId
+        ? await getRuntimeComputer(workspace.computerId)
+        : null;
+      if (
+        !computer ||
+        computer.projectId !== workspace.projectId ||
+        computer.provider !== workspace.provider ||
+        !computer.providerComputerId ||
+        !workspace.worktreePath
+      ) {
         return NextResponse.json(
           { error: "The interactive worktree is not available yet." },
           { status: 409 },
@@ -46,14 +54,14 @@ export async function GET(request: Request, context: RouteContext) {
       }
       if (path !== null) {
         const diff = await provider.readWorkspaceChangedFileDiff(
-          computer.daytonaSandboxId,
+          computer.providerComputerId,
           workspace.worktreePath,
           path,
         );
         return NextResponse.json({ diff });
       }
       const files = await provider.listWorkspaceChangedFiles(
-        computer.daytonaSandboxId,
+        computer.providerComputerId,
         workspace.worktreePath,
       );
       return NextResponse.json({ files });

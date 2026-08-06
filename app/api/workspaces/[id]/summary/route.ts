@@ -2,13 +2,16 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import {
-  getRuntimeComputerByProject,
+  getRuntimeComputer,
   getWorkspace,
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
-import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import {
+  isComputeRuntimeProvider,
+  providerErrorResponse,
+  resolveProvider,
+} from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -40,15 +43,22 @@ export async function GET(_request: Request, context: RouteContext) {
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);
   const provider = resolution.provider;
-  if (!(provider instanceof DaytonaRuntimeProvider)) {
+  if (!isComputeRuntimeProvider(provider)) {
     return NextResponse.json(
-      { error: "Workspace summaries require the Daytona runtime provider." },
+      { error: "Workspace summaries require a Runtime Computer provider." },
       { status: 409 },
     );
   }
 
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
-  if (!computer || !computer.daytonaSandboxId) {
+  const computer = workspace.computerId
+    ? await getRuntimeComputer(workspace.computerId)
+    : null;
+  if (
+    !computer ||
+    computer.projectId !== workspace.projectId ||
+    computer.provider !== workspace.provider ||
+    !computer.providerComputerId
+  ) {
     return NextResponse.json(
       { error: "This project has no Runtime Computer." },
       { status: 409 },
@@ -62,7 +72,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
   let target;
   try {
-    target = await provider.agentTarget(computer.daytonaSandboxId, secret);
+    target = await provider.agentTarget(computer.providerComputerId, secret);
   } catch (error) {
     console.error(`Summary: agentTarget failed for ${workspace.id}`, error);
     return NextResponse.json(

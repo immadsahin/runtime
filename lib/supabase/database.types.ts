@@ -110,9 +110,13 @@ type RuntimeComputerRow = {
   id: string;
   owner_id: string;
   project_id: string;
+  compute_provider: "daytona" | "e2b";
+  placement_key: string;
+  topology: "shared" | "isolated";
   status: RuntimeComputerStatusDb;
   image_version: string;
   daytona_sandbox_id: string | null;
+  provider_computer_id: string | null;
   agent_base_url: string | null;
   agent_secret: string | null;
   provision_timings: Json | null;
@@ -275,6 +279,9 @@ export type Database = {
       claim_runtime_computer: {
         Args: {
           requested_project_id: string;
+          requested_placement_key?: string;
+          requested_compute_provider?: string;
+          requested_topology?: "shared" | "isolated";
           requested_agent_secret: string;
           requested_image_version?: string;
         };

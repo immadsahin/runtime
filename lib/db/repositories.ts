@@ -255,24 +255,56 @@ export async function getRuntimeComputerByProject(
     .from("runtime_computers")
     .select("*")
     .eq("project_id", projectId)
+    .eq("compute_provider", "daytona")
+    .eq("placement_key", `project:${projectId}`)
     .maybeSingle();
 
   if (error) throw error;
   return data ? toRuntimeComputer(data) : null;
 }
 
+/** Resolve a computer by its immutable placement identity. */
+export async function getRuntimeComputerByPlacement(input: {
+  projectId: string;
+  provider: Extract<ProviderName, "daytona" | "e2b">;
+  placementKey: string;
+}): Promise<RuntimeComputer | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("runtime_computers")
+    .select("*")
+    .eq("project_id", input.projectId)
+    .eq("compute_provider", input.provider)
+    .eq("placement_key", input.placementKey)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toRuntimeComputer(data) : null;
+}
+
+/** Resolve the Runtime Computer attached to a workspace. */
+export async function getRuntimeComputer(id: string): Promise<RuntimeComputer | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("runtime_computers")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toRuntimeComputer(data) : null;
+}
+
 /**
- * Claim the single Runtime Computer slot for a project. The
- * `unique (project_id)` constraint makes this the concurrency gate for lazy
- * provisioning: two "New Workspace" clicks race here and exactly one insert
- * wins. The loser gets a unique-violation, catches it, and reads the existing
- * row via {@link getRuntimeComputerByProject}.
+ * Claim one immutable Runtime Computer placement. The RPC serializes callers
+ * by `(provider, placement_key)` and returns the exact claimed row.
  */
 export async function createRuntimeComputer(input: {
   ownerId: string;
   projectId: string;
+  provider: Extract<ProviderName, "daytona" | "e2b">;
+  placementKey: string;
+  topology: "shared" | "isolated";
   agentSecret: string;
-  imageVersion?: string;
+  imageVersion: string;
 }): Promise<RuntimeComputer> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -280,9 +312,12 @@ export async function createRuntimeComputer(input: {
     .insert({
       owner_id: input.ownerId,
       project_id: input.projectId,
+      compute_provider: input.provider,
+      placement_key: input.placementKey,
+      topology: input.topology,
       agent_secret: input.agentSecret,
+      image_version: input.imageVersion,
       status: "provisioning",
-      ...(input.imageVersion && { image_version: input.imageVersion }),
     })
     .select("*")
     .single();
@@ -292,18 +327,26 @@ export async function createRuntimeComputer(input: {
 }
 
 /**
- * Atomically claim the per-project Runtime Computer slot. The SQL function
+ * Atomically claim an immutable Runtime Computer placement. The SQL function
  * takes a transaction-scoped advisory lock before reading/inserting, while the
- * `unique (project_id)` constraint remains the durable backstop.
+ * provider/placement uniqueness constraint remains the durable backstop.
  */
 export async function claimRuntimeComputer(input: {
   projectId: string;
+  placementKey: string;
+  provider: Extract<ProviderName, "daytona" | "e2b">;
+  topology: "shared" | "isolated";
+  imageVersion: string;
   agentSecret: string;
 }): Promise<{ computer: RuntimeComputer; shouldProvision: boolean }> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.rpc("claim_runtime_computer", {
     requested_project_id: input.projectId,
+    requested_placement_key: input.placementKey,
+    requested_compute_provider: input.provider,
+    requested_topology: input.topology,
     requested_agent_secret: input.agentSecret,
+    requested_image_version: input.imageVersion,
   });
 
   if (error) throw error;
@@ -311,7 +354,11 @@ export async function claimRuntimeComputer(input: {
   if (!claim || data.length !== 1) {
     throw new Error("Runtime Computer claim returned an invalid result.");
   }
-  const computer = await getRuntimeComputerByProject(input.projectId);
+  const computer = await getRuntimeComputerByPlacement({
+    projectId: input.projectId,
+    provider: input.provider,
+    placementKey: input.placementKey,
+  });
   if (!computer || computer.id !== claim.runtime_computer_id) {
     throw new Error("Runtime Computer claim was not persisted.");
   }
@@ -322,7 +369,7 @@ export async function updateRuntimeComputer(
   id: string,
   patch: {
     status?: RuntimeComputerStatus;
-    daytonaSandboxId?: string | null;
+    providerComputerId?: string | null;
     agentBaseUrl?: string | null;
     provisionTimings?: ProvisionTimings | null;
     errorMessage?: string | null;
@@ -334,8 +381,8 @@ export async function updateRuntimeComputer(
     .from("runtime_computers")
     .update({
       ...(patch.status !== undefined && { status: patch.status }),
-      ...(patch.daytonaSandboxId !== undefined && {
-        daytona_sandbox_id: patch.daytonaSandboxId,
+      ...(patch.providerComputerId !== undefined && {
+        provider_computer_id: patch.providerComputerId,
       }),
       ...(patch.agentBaseUrl !== undefined && {
         agent_base_url: patch.agentBaseUrl,
@@ -361,7 +408,7 @@ export async function updateRuntimeComputer(
  */
 export async function markRuntimeComputerStoppedIfReady(
   id: string,
-  daytonaSandboxId: string,
+  providerComputerId: string,
 ): Promise<boolean> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -372,7 +419,7 @@ export async function markRuntimeComputerStoppedIfReady(
     })
     .eq("id", id)
     .eq("status", "ready")
-    .eq("daytona_sandbox_id", daytonaSandboxId)
+    .eq("provider_computer_id", providerComputerId)
     .select("id")
     .maybeSingle();
 

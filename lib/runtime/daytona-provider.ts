@@ -4,7 +4,12 @@ import path from "node:path";
 import { Daytona, type Sandbox } from "@daytonaio/sdk";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
-import type { AgentTarget } from "@/lib/runtime/agent-client";
+import type {
+  AgentTarget,
+  ComputeProvider,
+  ProvisionComputerInput as ComputeProvisionComputerInput,
+  ProvisionedComputer as ComputeProvisionedComputer,
+} from "@/lib/runtime/compute-provider";
 import {
   AGENT_PORT,
   bootAgent,
@@ -28,8 +33,6 @@ import type {
   CommitWorkspaceResult,
   CreatePullRequestResult,
   CreateWorkspaceResult,
-  ProvisionStage,
-  ProvisionTimings,
   RuntimeProvider,
 } from "@/lib/runtime/types";
 
@@ -43,8 +46,12 @@ const CREATE_TIMEOUT_SECONDS = 180;
 /** Signed WS preview lifetime; refreshed on reconnect (Spike 1 finding). */
 const SIGNED_URL_TTL_SECONDS = 300;
 
-/** Everything the control plane needs to reach a freshly provisioned box. */
-export type ProvisionedComputer = {
+/**
+ * Daytona's compatibility projection for callers that still persist Daytona
+ * preview data. The generic ComputeProvider result is the provider-neutral
+ * subset used by new compute-backed providers.
+ */
+export type ProvisionedComputer = ComputeProvisionedComputer & {
   sandboxId: string;
   /** Standard preview URL base for control calls (preview token sent as header). */
   agentBaseUrl: string;
@@ -52,25 +59,9 @@ export type ProvisionedComputer = {
   daytonaPreviewToken: string;
   /** Signed preview URL base for the browser WS (token already in the host). */
   signedWsBaseUrl: string;
-  timings: ProvisionTimings;
 };
 
-export type ProvisionComputerInput = {
-  /** Per-computer secret (runtime_computers.agent_secret) the agent verifies. */
-  secret: string;
-  /** When set, seed the bare mirror so worktrees can be created immediately. */
-  repoFullName?: string;
-  githubToken?: string;
-  /** Project secrets delivered into the agent's memory at launch and injected
-   *  into each Claude session's env (e.g. CLAUDE_CODE_OAUTH_TOKEN). Never at
-   *  rest on the box — in-memory only, not written to disk or archived.
-   *  TODO(M3): replace launch-time env injection with runtime-agent secret
-   *  provisioning (a dedicated delivery channel), so per-workspace secrets don't
-   *  ride the boot env. */
-  sessionEnv?: Record<string, string>;
-  /** Optional live per-stage progress (the UI/verify script logs these). */
-  onStage?: (stage: ProvisionStage, ms: number) => void;
-};
+export type ProvisionComputerInput = ComputeProvisionComputerInput;
 
 /**
  * The Daytona backend — Runtime's real compute model: one always-on box per
@@ -91,8 +82,10 @@ export type ProvisionComputerInput = {
  * The `RuntimeProvider` implementation exists only so provider selection
  * (`provider.ts`/`resolve.ts`) type-checks during the transition.
  */
-export class DaytonaRuntimeProvider implements RuntimeProvider {
+export class DaytonaRuntimeProvider implements RuntimeProvider, ComputeProvider {
   readonly name = "daytona" as const;
+  readonly kind = "compute" as const;
+  readonly topology = "shared" as const;
 
   private client: Daytona | null = null;
   private agentBinary: Buffer | null = null;
@@ -111,6 +104,10 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
 
   private snapshot(): string {
     return optionalEnv("DAYTONA_SNAPSHOT") ?? DEFAULT_SNAPSHOT;
+  }
+
+  placementVersion(): string {
+    return this.snapshot();
   }
 
   /** Read (and cache) the cross-compiled agent uploaded on each provision. */
@@ -200,7 +197,7 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
             // Always-on for V1: never auto-stop, never auto-delete, no TTL.
             autoStopInterval: 0,
             autoDeleteInterval: -1,
-            labels: { "runtime.role": "computer" },
+            labels: { ...input.labels, "runtime.role": "computer" },
           },
           { timeout: CREATE_TIMEOUT_SECONDS },
         ),
@@ -225,7 +222,18 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
       }
 
       const preview = await this.previewUrls(box);
-      return { sandboxId: box.id, ...preview, timings: timer.timings() };
+      const controlHeaders = {
+        "x-daytona-preview-token": preview.daytonaPreviewToken,
+      };
+      return {
+        computerId: box.id,
+        controlBaseUrl: preview.agentBaseUrl,
+        controlHeaders,
+        browserBaseUrl: preview.signedWsBaseUrl,
+        sandboxId: box.id,
+        ...preview,
+        timings: timer.timings(),
+      };
     } catch (error) {
       if (sandbox) {
         await daytona
@@ -318,14 +326,22 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
     }
   }
 
+  async pauseComputer(): Promise<void> {
+    throw new Error("A shared Daytona Runtime Computer cannot be paused per workspace.");
+  }
+
+  async resumeComputer(): Promise<void> {
+    throw new Error("A shared Daytona Runtime Computer cannot be resumed per workspace.");
+  }
+
   /** Build the {@link AgentTarget} an {@link AgentClient} needs for one box. */
   async agentTarget(sandboxId: string, secret: string): Promise<AgentTarget> {
     const sandbox = await this.daytona().get(sandboxId);
     const preview = await this.previewUrls(sandbox);
     return {
       controlBaseUrl: preview.agentBaseUrl,
-      daytonaPreviewToken: preview.daytonaPreviewToken,
-      signedWsBaseUrl: preview.signedWsBaseUrl,
+      controlHeaders: { "x-daytona-preview-token": preview.daytonaPreviewToken },
+      browserBaseUrl: preview.signedWsBaseUrl,
       secret,
     };
   }

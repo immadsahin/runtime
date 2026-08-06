@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { toRuntimeComputer } from "@/lib/db/mappers";
+import type { ComputeProvider } from "@/lib/runtime/compute-provider";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import type { RuntimeProvider } from "@/lib/runtime/types";
 
@@ -10,6 +11,9 @@ const NOT_WIRED = /not on the Daytona provider/;
 test("provider identifies as the daytona backend without credentials", () => {
   // Constructing must not read DAYTONA_* env (lazy client) so selection and
   // tests work in any environment.
+  const provider: ComputeProvider = new DaytonaRuntimeProvider();
+  assert.equal(provider.kind, "compute");
+  assert.equal(provider.topology, "shared");
   assert.equal(new DaytonaRuntimeProvider().name, "daytona");
 });
 
@@ -41,9 +45,13 @@ test("toRuntimeComputer maps provision_timings and omits the agent secret", () =
     id: "c1",
     owner_id: "o1",
     project_id: "p1",
+    compute_provider: "daytona",
+    placement_key: "project:p1",
+    topology: "shared",
     status: "ready",
     image_version: "v1",
     daytona_sandbox_id: "sb1",
+    provider_computer_id: "sb1",
     agent_base_url: "https://8080-sb1.daytonaproxy01.net",
     agent_secret: "super-secret",
     provision_timings: {
@@ -71,9 +79,13 @@ test("toRuntimeComputer tolerates absent or malformed provision_timings", () => 
     id: "c",
     owner_id: "o",
     project_id: "p",
+    compute_provider: "daytona" as const,
+    placement_key: "project:p",
+    topology: "shared" as const,
     status: "provisioning" as const,
     image_version: "v1",
     daytona_sandbox_id: null,
+    provider_computer_id: null,
     agent_base_url: null,
     agent_secret: null,
     error_message: null,

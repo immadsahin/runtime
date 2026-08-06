@@ -1,5 +1,6 @@
 import { providerName } from "@/lib/env";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { E2BRuntimeProvider } from "@/lib/runtime/e2b-provider";
 import { LocalRuntimeProvider } from "@/lib/runtime/local-provider";
 import { ModalRuntimeProvider } from "@/lib/runtime/modal-provider";
 import type { RuntimeProvider } from "@/lib/runtime/types";
@@ -24,6 +25,9 @@ export function getRuntimeProvider(): RuntimeProvider {
       break;
     case "modal":
       cached = new ModalRuntimeProvider();
+      break;
+    case "e2b":
+      cached = new E2BRuntimeProvider();
       break;
     default:
       cached = new LocalRuntimeProvider();

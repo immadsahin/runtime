@@ -2,15 +2,18 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import {
-  getRuntimeComputerByProject,
+  getRuntimeComputer,
   getWorkspace,
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
-import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import {
+  isComputeRuntimeProvider,
+  providerErrorResponse,
+  resolveProvider,
+} from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -45,17 +48,24 @@ export async function POST(request: Request, context: RouteContext) {
   if (!resolution.ok) return providerErrorResponse(resolution);
   const provider = resolution.provider;
 
-  // Session attach is Daytona-only — the local/modal providers have no
-  // runtime-agent to speak the frozen PTY protocol.
-  if (!(provider instanceof DaytonaRuntimeProvider)) {
+  // Computer-backed providers expose the frozen runtime-agent PTY protocol;
+  // workspace-per-sandbox providers do not.
+  if (!isComputeRuntimeProvider(provider)) {
     return NextResponse.json(
-      { error: "Live sessions require the Daytona runtime provider." },
+      { error: "Live sessions require a Runtime Computer provider." },
       { status: 409 },
     );
   }
 
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
-  if (!computer || !computer.daytonaSandboxId) {
+  const computer = workspace.computerId
+    ? await getRuntimeComputer(workspace.computerId)
+    : null;
+  if (
+    !computer ||
+    computer.projectId !== workspace.projectId ||
+    computer.provider !== workspace.provider ||
+    !computer.providerComputerId
+  ) {
     return NextResponse.json(
       { error: "This project has no Runtime Computer. Create a workspace first." },
       { status: 409 },
@@ -75,7 +85,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   let target;
   try {
-    target = await provider.agentTarget(computer.daytonaSandboxId, secret);
+    target = await provider.agentTarget(computer.providerComputerId, secret);
   } catch (error) {
     console.error(`Session attach: agentTarget failed for ${workspace.id}`, error);
     return NextResponse.json(

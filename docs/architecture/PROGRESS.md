@@ -60,17 +60,32 @@ Phased execution (Option A — transport-first):
     redacts session credentials from PTY frames (including cross-read values),
     and binds every control request to its token's workspace.
 - 🟡 Phase 6 — Acceptance test on real Daytona + `spike-m3-report.md`
-  - Local/unit verification is complete, but the current sandbox has no
-    `DAYTONA_API_KEY`; a provisioned Runtime Computer and authenticated
-    browser session remain required for full acceptance evidence.
-- ⬜ Phase 7 — Dogfood: an uninterrupted work session in Runtime without opening Conductor
+  - Local/unit verification is complete. Daytona credentials are now available,
+    but real acceptance remains blocked: two live M4 sessions did not persist a
+    Claude JSONL after their PTY prompt, and a later verifier-owned Daytona
+    computer is stuck in `creating` after the provider's 180-second lifecycle
+    timeout. A provisioned Runtime Computer and authenticated browser session
+    remain required for full acceptance evidence.
+- ⬜ Phase 7 — Dogfood: measurable Runtime-only operation before flexible workloads
+  - Runtime is used for all normal coding sessions during the dogfood window;
+    no Conductor workspaces are created.
+  - At least one unattended overnight Claude session completes and reconnects
+    successfully.
+  - Archive → Replay → Restore is used on real in-progress work.
+  - Each reliability or UX friction point is fixed, explicitly accepted, or
+    recorded as a known limitation.
 
 ## Milestone 4 — Archive / Replay / Restore — 🟡 IMPLEMENTATION COMPLETE (real-box acceptance pending)
 Foundations landed (cast recorder, storage plumbing, snapshot schema + table).
 Flows built as vertical slices on top: Slice 1 (Archive) → Slice 2 (Replay) →
 Slice 3 (Restore) — all landed and unit/integration-green. What remains is the
-`m4-plan.md` acceptance run on a real Daytona box (no `DAYTONA_API_KEY` here,
-same gate as M3 Phase 6). See [`m4-plan.md`](./m4-plan.md), [`m4-foundations-handoff.md`](./m4-foundations-handoff.md).
+`m4-plan.md` acceptance run on a real Daytona box. The 2026-08-06 attempt
+authenticated and reached live Runtime Computers, but a Claude JSONL did not
+persist after the verifier PTY prompt; a later retry is also stuck in Daytona
+`creating` state after its 180-second lifecycle timeout. Neither is an
+archive/restore success; see
+[`m4-real-box-report.md`](./m4-real-box-report.md). See also
+[`m4-plan.md`](./m4-plan.md), [`m4-foundations-handoff.md`](./m4-foundations-handoff.md).
 - ✅ Foundations — PTY cast recorder (asciinema v2), Supabase Storage signed-URL
   helpers, manifest zod schema + `workspace_snapshots` table (+ bucket).
 - ✅ **Slice 1 — Archive → Snapshot (produce).** State machine
@@ -80,8 +95,9 @@ same gate as M3 Phase 6). See [`m4-plan.md`](./m4-plan.md), [`m4-foundations-han
   `Service.Archive` produces + returns the manifest; lifecycle `archive` action
   mints URLs, drives the agent, caches the `workspace_snapshots` row, marks
   `archived`. Worktree intentionally KEPT (Restore reclaims it in Slice 3).
-  Verified: `go test ./...` + `pnpm check` green; real-box acceptance deferred
-  (no `DAYTONA_API_KEY`, like M3 Phase 6).
+  Verified: `go test ./...` + `pnpm check` green; real-box acceptance remains
+  deferred pending a usable real Daytona session and Claude transcript evidence
+  (see [`m4-real-box-report.md`](./m4-real-box-report.md)).
 - ✅ **Slice 2 — Replay (browser + storage only).** Read-only replay of an
   archived Session with NO Runtime Computer (invariant #2). Off-box parsers:
   `lib/runtime/replay/conversation.ts` (JSONL→events, pinned to the Go `decode`
@@ -115,6 +131,27 @@ same gate as M3 Phase 6). See [`m4-plan.md`](./m4-plan.md), [`m4-foundations-han
   Supabase signed upload/download wire format on a real box; render the
   committed diff in Replay (needs the git bundle).
 
+## Flexible Workloads / E2B — ⬜ BLOCKED ON THE ENTRY GATE
+
+The target architecture is a workload-agnostic Runtime: a workspace receives one
+immutable, resolved specification at creation; its scheduler runs once; its
+provider never changes underneath it. E2B is the first isolated provider, not a
+security-research feature. Full research, the provider boundary, capability
+matrix, and real-sandbox verification plan live in
+[`e2b-provider-spike.md`](./e2b-provider-spike.md).
+
+**Do not begin implementation until:**
+
+1. M3 Phase 6 real-Daytona acceptance is recorded;
+2. M4 real-Daytona archive/replay/restore acceptance is recorded;
+3. the measurable M3 Phase 7 dogfood gate above passes; and
+4. the provider-neutral `ComputeProvider` refactor has preserved current
+   Daytona behavior.
+
+Then execute, in order: immutable Workspace Specification → ComputeProvider
+seam → creation-only Scheduler → E2B template/provider verification → external
+consumer. No workload-specific logic belongs in Runtime.
+
 ---
 
 ## Definition of done (the full loop)
@@ -126,7 +163,7 @@ close laptop → Claude keeps running → reconnect from another device → resu
 - ✅ Applied `20260804110000_runtime_computers.sql` + `20260805000000_runtime_computer_provision_timings.sql` to Supabase
   (`database.types.ts` hand-maintained in lockstep)
 - ⬜ Rotate the `CLAUDE_CODE_OAUTH_TOKEN` shared earlier (treat as exposed)
-- ⬜ Provision/configure Daytona credentials in the deployment secret manager,
-  then complete the authenticated Phase 6 acceptance checklist.
+- ⬜ Have Daytona clear the verifier-owned stuck `creating` computer and resolve
+  the Claude JSONL gate, then complete the authenticated Phase 6 checklist.
 - ⬜ Review/merge PR #9
 - Known limitations (from Spike 4): interactive-TUI PTY input handling; heavy-workload/>30-min profiling; per-turn JSONL flush confirmation

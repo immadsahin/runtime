@@ -6,7 +6,7 @@ import { getOwner } from "@/lib/auth/owner";
 import {
   createWorkspaceRow,
   getProject,
-  getRuntimeComputerByProject,
+  getRuntimeComputerByPlacement,
   markRuntimeComputerStoppedIfReady,
   updateWorkspace,
 } from "@/lib/db/repositories";
@@ -14,8 +14,8 @@ import { optionalEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { runtimeSessionEnvironment } from "@/lib/runtime/ensure-runtime-computer";
+import { isComputeRuntimeProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { ProvisionPhase } from "@/lib/runtime/types";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
@@ -129,44 +129,56 @@ export async function POST(request: Request, context: RouteContext) {
   };
 
   try {
-    if (provider instanceof DaytonaRuntimeProvider) {
+    if (isComputeRuntimeProvider(provider)) {
       const githubToken = optionalEnv("GITHUB_PAT");
+      const placement = provider.topology === "shared"
+        ? { placementKey: `project:${project.id}`, topology: "shared" as const }
+        : { placementKey: `workspace:${workspace.id}`, topology: "isolated" as const };
 
-      // A Runtime Computer is intentionally long-lived, but it can still be
-      // removed outside Runtime (or become unavailable after a provider
-      // incident). Only transition the exact ready row we checked so parallel
-      // requests retain the claim RPC's single-provisioner invariant.
-      const currentComputer = await getRuntimeComputerByProject(project.id);
+      // A persisted placement can be removed outside Runtime. Only transition
+      // the exact ready row we checked so parallel requests retain the claim
+      // RPC's single-provisioner invariant.
+      const currentComputer = await getRuntimeComputerByPlacement({
+        projectId: project.id,
+        provider: provider.name,
+        placementKey: placement.placementKey,
+      });
       if (
         currentComputer?.status === "ready" &&
-        currentComputer.daytonaSandboxId &&
-        !(await provider.computerAlive(currentComputer.daytonaSandboxId))
+        currentComputer.providerComputerId &&
+        !(await provider.computerAlive(currentComputer.providerComputerId))
       ) {
         await markRuntimeComputerStoppedIfReady(
           currentComputer.id,
-          currentComputer.daytonaSandboxId,
+          currentComputer.providerComputerId,
         );
       }
 
       const ensured = await ensureProjectRuntimeComputer(provider, {
         projectId: project.id,
+        provider: provider.name,
+        placementKey: placement.placementKey,
+        topology: placement.topology,
+        // Existing placements retain their originally frozen version. New
+        // placements record the active provider's immutable version once.
+        imageVersion: currentComputer?.imageVersion ?? provider.placementVersion(),
         repoFullName: project.fullName,
         githubToken,
         sessionEnv: runtimeSessionEnvironment(),
       });
       const computer = ensured.computer;
-      if (!computer.daytonaSandboxId) {
-        throw new Error("Ready Runtime Computer has no Daytona sandbox id.");
+      if (!computer.providerComputerId) {
+        throw new Error("Ready Runtime Computer has no provider computer id.");
       }
 
       // Initial provisioning clones the mirror. Every later workspace refreshes
       // it before the agent branches from the project's default branch.
       if (!ensured.provisioned) {
-        await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
+        await provider.fetchMirror(computer.providerComputerId, githubToken);
       }
 
       const target = await provider.agentTarget(
-        computer.daytonaSandboxId,
+        computer.providerComputerId,
         ensured.agentSecret,
       );
       const identity: WorkspaceIdentity = {

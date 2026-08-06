@@ -12,8 +12,12 @@ function computer(overrides: Partial<RuntimeComputer> = {}): RuntimeComputer {
   return {
     id: "computer-1",
     projectId: "project-1",
+    provider: "daytona",
+    placementKey: "project:project-1",
+    topology: "shared",
     status: "provisioning",
     imageVersion: "v1",
+    providerComputerId: null,
     daytonaSandboxId: null,
     agentBaseUrl: null,
     provisionTimings: null,
@@ -38,7 +42,13 @@ function concurrencyHarness() {
   const deps: EnsureRuntimeComputerDependencies = {
     claim: async (input) => {
       if (!row) {
-        row = computer();
+        row = computer({
+          projectId: input.projectId,
+          provider: input.provider,
+          placementKey: input.placementKey,
+          topology: input.topology,
+          imageVersion: input.imageVersion,
+        });
         secret = input.agentSecret;
         return { computer: row, shouldProvision: true };
       }
@@ -56,15 +66,16 @@ function concurrencyHarness() {
       }
       return { computer: row, shouldProvision: false };
     },
-    getByProject: async () => row,
+    getByPlacement: async () => row,
     readSecret: async () => secret,
     update: async (_id, patch) => {
       assert.ok(row);
       row = {
         ...row,
         ...(patch.status !== undefined && { status: patch.status }),
-        ...(patch.daytonaSandboxId !== undefined && {
-          daytonaSandboxId: patch.daytonaSandboxId,
+        ...(patch.providerComputerId !== undefined && {
+          providerComputerId: patch.providerComputerId,
+          daytonaSandboxId: patch.providerComputerId,
         }),
         ...(patch.agentBaseUrl !== undefined && { agentBaseUrl: patch.agentBaseUrl }),
         ...(patch.provisionTimings !== undefined && {
@@ -95,6 +106,10 @@ test("concurrent first-workspace ensures provision exactly one Runtime Computer"
       // for its peer to observe the durable provisioning row and wait.
       await new Promise((resolve) => setTimeout(resolve, 10));
       return {
+        computerId: "daytona-1",
+        controlBaseUrl: "https://agent.example.test",
+        controlHeaders: { "x-daytona-preview-token": "preview-token" },
+        browserBaseUrl: "https://signed.example.test",
         sandboxId: "daytona-1",
         agentBaseUrl: "https://agent.example.test",
         daytonaPreviewToken: "preview-token",
@@ -139,6 +154,10 @@ test("a failed Runtime Computer can be claimed and provisioned by a retry", asyn
       provisions += 1;
       if (provisions === 1) throw new Error("Daytona unavailable");
       return {
+        computerId: "daytona-retry",
+        controlBaseUrl: "https://agent.example.test",
+        controlHeaders: { "x-daytona-preview-token": "preview-token" },
+        browserBaseUrl: "https://signed.example.test",
         sandboxId: "daytona-retry",
         agentBaseUrl: "https://agent.example.test",
         daytonaPreviewToken: "preview-token",
@@ -155,5 +174,33 @@ test("a failed Runtime Computer can be claimed and provisioned by a retry", asyn
   assert.equal(provisions, 2);
   assert.equal(retried.provisioned, true);
   assert.equal(harness.row()?.status, "ready");
-  assert.equal(harness.row()?.daytonaSandboxId, "daytona-retry");
+  assert.equal(harness.row()?.providerComputerId, "daytona-retry");
+});
+
+test("an isolated placement retains its provider, workspace key, and template version", async () => {
+  const harness = concurrencyHarness();
+  const ensured = await ensureRuntimeComputer(
+    {
+      provisionComputer: async () => ({
+        computerId: "e2b-1",
+        controlBaseUrl: "https://agent.example.test",
+        controlHeaders: {},
+        browserBaseUrl: "https://agent.example.test",
+        timings: { stages: [{ stage: "sandbox_create", ms: 10 }], totalMs: 10 },
+      }),
+    },
+    {
+      ...input,
+      provider: "e2b",
+      placementKey: "workspace:workspace-1",
+      topology: "isolated",
+      imageVersion: "runtime-computer-e2b-v1",
+    },
+    harness.deps,
+  );
+
+  assert.equal(ensured.computer.provider, "e2b");
+  assert.equal(ensured.computer.placementKey, "workspace:workspace-1");
+  assert.equal(ensured.computer.topology, "isolated");
+  assert.equal(ensured.computer.imageVersion, "runtime-computer-e2b-v1");
 });

@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type {
   ProvisionedComputer,
   ProvisionComputerInput,
-} from "@/lib/runtime/daytona-provider";
+} from "@/lib/runtime/compute-provider";
 import type { RuntimeComputer, RuntimeComputerStatus } from "@/lib/runtime/types";
 
 const POLL_INTERVAL_MS = 500;
@@ -15,18 +15,26 @@ export type RuntimeComputerProvisioner = {
 
 type Claim = (input: {
   projectId: string;
+  placementKey: string;
+  provider: "daytona" | "e2b";
+  topology: "shared" | "isolated";
+  imageVersion: string;
   agentSecret: string;
 }) => Promise<{ computer: RuntimeComputer; shouldProvision: boolean }>;
 
 export type EnsureRuntimeComputerDependencies = {
   claim: Claim;
-  getByProject: (projectId: string) => Promise<RuntimeComputer | null>;
+  getByPlacement: (input: {
+    projectId: string;
+    provider: "daytona" | "e2b";
+    placementKey: string;
+  }) => Promise<RuntimeComputer | null>;
   readSecret: (computerId: string) => Promise<string | null>;
   update: (
     id: string,
     patch: {
       status?: RuntimeComputerStatus;
-      daytonaSandboxId?: string | null;
+      providerComputerId?: string | null;
       agentBaseUrl?: string | null;
       provisionTimings?: RuntimeComputer["provisionTimings"];
       errorMessage?: string | null;
@@ -39,6 +47,10 @@ export type EnsureRuntimeComputerDependencies = {
 
 export type EnsureRuntimeComputerInput = {
   projectId: string;
+  placementKey?: string;
+  provider?: "daytona" | "e2b";
+  topology?: "shared" | "isolated";
+  imageVersion?: string;
   repoFullName: string;
   githubToken?: string;
   sessionEnv?: Record<string, string>;
@@ -53,26 +65,42 @@ export type EnsuredRuntimeComputer = {
 };
 
 /**
- * Find or lazily provision the single Runtime Computer for a project.
+ * Find or lazily provision one immutable Runtime Computer placement.
  *
  * The database RPC atomically elects exactly one request to own provision.
- * Non-owners wait on the durable row rather than starting duplicate Daytona
- * boxes. The unique project constraint is deliberately retained as a second,
- * database-enforced line of defence.
+ * Non-owners wait on the durable row rather than starting duplicate provider
+ * computers. Provider/placement uniqueness is the database-enforced line of
+ * defence.
  */
 export async function ensureRuntimeComputer(
   provider: RuntimeComputerProvisioner,
   input: EnsureRuntimeComputerInput,
   deps: EnsureRuntimeComputerDependencies,
 ): Promise<EnsuredRuntimeComputer> {
+  const placement: EnsureRuntimeComputerInput & {
+    placementKey: string;
+    provider: "daytona" | "e2b";
+    topology: "shared" | "isolated";
+    imageVersion: string;
+  } = {
+    ...input,
+    placementKey: input.placementKey ?? `project:${input.projectId}`,
+    provider: input.provider ?? "daytona",
+    topology: input.topology ?? "shared",
+    imageVersion: input.imageVersion ?? "runtime-computer-v1",
+  };
   const agentSecret = randomBytes(32).toString("hex");
   const claim = await deps.claim({
-    projectId: input.projectId,
+    projectId: placement.projectId,
+    placementKey: placement.placementKey,
+    provider: placement.provider,
+    topology: placement.topology,
+    imageVersion: placement.imageVersion,
     agentSecret,
   });
 
   if (!claim.shouldProvision) {
-    const computer = await waitForReadyComputer(input.projectId, deps);
+    const computer = await waitForReadyComputer(placement, deps);
     const persistedSecret = await deps.readSecret(computer.id);
     if (!persistedSecret) {
       throw new Error("Runtime Computer secret is missing after provisioning.");
@@ -89,14 +117,14 @@ export async function ensureRuntimeComputer(
     });
     await deps.update(claim.computer.id, {
       status: "ready",
-      daytonaSandboxId: provisioned.sandboxId,
-      agentBaseUrl: provisioned.agentBaseUrl,
+      providerComputerId: provisioned.computerId,
+      agentBaseUrl: provisioned.controlBaseUrl,
       provisionTimings: provisioned.timings,
       errorMessage: null,
       touchActive: true,
     });
-    const computer = await deps.getByProject(input.projectId);
-    if (!computer || computer.status !== "ready" || !computer.daytonaSandboxId) {
+    const computer = await deps.getByPlacement(placement);
+    if (!computer || computer.status !== "ready" || !computer.providerComputerId) {
       throw new Error("Runtime Computer was not persisted as ready.");
     }
     return { computer, provisioned: true, agentSecret };
@@ -112,16 +140,20 @@ export async function ensureRuntimeComputer(
 }
 
 async function waitForReadyComputer(
-  projectId: string,
+  input: {
+    projectId: string;
+    provider: "daytona" | "e2b";
+    placementKey: string;
+  },
   deps: EnsureRuntimeComputerDependencies,
 ): Promise<RuntimeComputer> {
   const deadline = deps.now() + PROVISION_WAIT_MS;
   while (true) {
-    const computer = await deps.getByProject(projectId);
+    const computer = await deps.getByPlacement(input);
     if (!computer) {
       throw new Error("Runtime Computer claim disappeared before provisioning completed.");
     }
-    if (computer.status === "ready" && computer.daytonaSandboxId) return computer;
+    if (computer.status === "ready" && computer.providerComputerId) return computer;
     if (computer.status === "error" || computer.status === "stopped") {
       throw new Error("Runtime Computer provisioning did not complete.");
     }

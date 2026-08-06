@@ -66,7 +66,7 @@ export type ProvisionPhase =
  * sandbox model; `daytona` is Runtime's real model (Project → Runtime Computer →
  * Workspace) where many workspaces share one always-on box.
  */
-export type ProviderName = "local" | "modal" | "daytona";
+export type ProviderName = "local" | "modal" | "daytona" | "e2b";
 
 export type Workspace = {
   id: string;
@@ -130,12 +130,19 @@ export type ProvisionTimings = {
 export type RuntimeComputer = {
   id: string;
   projectId: string;
+  /** Immutable compute provider selected when this placement was created. */
+  provider: Extract<ProviderName, "daytona" | "e2b">;
+  /** Project-scoped for shared computers; workspace-scoped for isolated ones. */
+  placementKey: string;
+  topology: "shared" | "isolated";
   status: RuntimeComputerStatus;
-  /** Frozen image tag this box was built from, e.g. `v1`. */
+  /** Frozen snapshot/template identifier selected at placement time. */
   imageVersion: string;
-  /** Daytona sandbox id; null until compute is provisioned. */
+  /** Provider-owned computer handle; null until compute is provisioned. */
+  providerComputerId: string | null;
+  /** @deprecated Use providerComputerId. Kept while old deployed routes roll. */
   daytonaSandboxId: string | null;
-  /** Base of the Daytona preview URL the runtime-agent is reachable at. */
+  /** Base URL the runtime-agent is reachable at. */
   agentBaseUrl: string | null;
   /** Wall-clock breakdown of the last provision; null until first measured. */
   provisionTimings: ProvisionTimings | null;

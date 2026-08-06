@@ -1,7 +1,7 @@
 /** Production wiring for lazy Runtime Computer provisioning. */
 import {
   claimRuntimeComputer,
-  getRuntimeComputerByProject,
+  getRuntimeComputerByPlacement,
   readRuntimeComputerSecret,
   updateRuntimeComputer,
 } from "@/lib/db/repositories";
@@ -14,7 +14,7 @@ import {
 
 const dependencies = {
   claim: claimRuntimeComputer,
-  getByProject: getRuntimeComputerByProject,
+  getByPlacement: getRuntimeComputerByPlacement,
   readSecret: readRuntimeComputerSecret,
   update: updateRuntimeComputer,
   sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),

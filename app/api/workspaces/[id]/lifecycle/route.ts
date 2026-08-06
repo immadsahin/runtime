@@ -5,6 +5,7 @@ import {
   createWorkspaceSnapshot,
   deleteWorkspaceSnapshots,
   getProject,
+  getRuntimeComputer,
   getRuntimeComputerByProject,
   getWorkspace,
   listWorkspaceSnapshots,
@@ -16,9 +17,13 @@ import {
 import { optionalEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { runtimeSessionEnvironment } from "@/lib/runtime/ensure-runtime-computer";
-import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import {
+  type ComputeRuntimeProvider,
+  isComputeRuntimeProvider,
+  providerErrorResponse,
+  resolveProvider,
+} from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
@@ -120,12 +125,12 @@ export async function POST(request: Request, context: RouteContext) {
   if (!resolution.ok) return providerErrorResponse(resolution);
   const provider = resolution.provider;
 
-  if (provider instanceof DaytonaRuntimeProvider) {
-    return daytonaLifecycle(action, workspace, provider, owner.id);
+  if (isComputeRuntimeProvider(provider)) {
+    return computeLifecycle(action, workspace, provider, owner.id);
   }
 
-  // Archive/restore operate on the runtime-agent's Session + Snapshot; only the
-  // Daytona-backed Runtime provides them. Legacy providers can't.
+  // Archive/restore operate on the runtime-agent's Session + Snapshot; legacy
+  // workspace-per-sandbox providers do not expose that contract.
   if (action === "archive" || action === "restore") {
     return NextResponse.json(
       { error: "Archive and restore are only supported on Runtime workspaces." },
@@ -137,17 +142,17 @@ export async function POST(request: Request, context: RouteContext) {
   return destroyWorkspace(workspace, provider);
 }
 
-async function daytonaLifecycle(
+async function computeLifecycle(
   action: LifecycleAction,
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputeRuntimeProvider,
   userId: string,
 ) {
-  if (action === "resume") return resumeDaytonaWorkspace(workspace, provider, userId);
-  if (action === "suspend") return suspendDaytonaWorkspace(workspace, provider, userId);
-  if (action === "archive") return archiveDaytonaWorkspace(workspace, provider, userId);
-  if (action === "restore") return restoreDaytonaWorkspace(workspace, provider, userId);
-  return destroyDaytonaWorkspace(workspace, provider, userId);
+  if (action === "resume") return resumeComputeWorkspace(workspace, provider, userId);
+  if (action === "suspend") return suspendComputeWorkspace(workspace, provider, userId);
+  if (action === "archive") return archiveComputeWorkspace(workspace, provider, userId);
+  if (action === "restore") return restoreComputeWorkspace(workspace, provider, userId);
+  return destroyComputeWorkspace(workspace, provider, userId);
 }
 
 /**
@@ -157,9 +162,9 @@ async function daytonaLifecycle(
  * workspace `archived`. The worktree is intentionally kept (Restore reclaims it
  * later), so an archived workspace is revivable — not destroyed.
  */
-async function archiveDaytonaWorkspace(
+async function archiveComputeWorkspace(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputeRuntimeProvider,
   userId: string,
 ) {
   if (workspace.status !== "ready" && workspace.status !== "idle") {
@@ -181,7 +186,7 @@ async function archiveDaytonaWorkspace(
     );
     const uploads = urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
 
-    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    const { agent, identity } = await computeAgent(workspace, provider, userId);
     const manifest = await agent.archiveWorkspace(identity, { archivedAt, uploads });
 
     await createWorkspaceSnapshot({
@@ -211,15 +216,15 @@ async function archiveDaytonaWorkspace(
 
 /**
  * Restore → revive an archived Session from its Snapshot. Ensures a Runtime
- * Computer for the project (provisioning one if none — NOT necessarily the
- * original box), mints signed download URLs for the tree + conversation, and
+ * Computer at its persisted placement (provisioning it if it was destroyed),
+ * mints signed download URLs for the tree + conversation, and
  * has the agent rebuild + VERIFY the worktree before relaunching Claude with
  * `--continue`. A verification failure surfaces as an error and leaves the
  * workspace archived rather than half-restored.
  */
-async function restoreDaytonaWorkspace(
+async function restoreComputeWorkspace(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputeRuntimeProvider,
   userId: string,
 ) {
   if (workspace.status !== "archived") {
@@ -259,40 +264,65 @@ async function restoreDaytonaWorkspace(
       })),
     );
 
-    // If the project's persisted box is marked ready but its Daytona sandbox has
-    // vanished, release the stale claim first so ensure provisions a replacement
-    // — otherwise restore would fail instead of rebuilding on a fresh box (the
-    // whole point of portable Restore). Mirrors the create flow.
-    const currentComputer = await getRuntimeComputerByProject(project.id);
+    // A provider resource can disappear outside Runtime. Release only the
+    // exact persisted placement we checked so a concurrent restore preserves
+    // the claim RPC's single-provisioner invariant.
+    const currentComputer = await computerForWorkspace(workspace);
     if (
       currentComputer?.status === "ready" &&
-      currentComputer.daytonaSandboxId &&
-      !(await provider.computerAlive(currentComputer.daytonaSandboxId))
+      currentComputer.providerComputerId &&
+      !(await provider.computerAlive(currentComputer.providerComputerId))
     ) {
       await markRuntimeComputerStoppedIfReady(
         currentComputer.id,
-        currentComputer.daytonaSandboxId,
+        currentComputer.providerComputerId,
       );
     }
 
-    // Ensure a box (any) and refresh its mirror before the agent branches from
-    // the bundle. Matches the create flow's lazy-provision path.
+    const placement = currentComputer
+      ? {
+          provider: currentComputer.provider,
+          placementKey: currentComputer.placementKey,
+          topology: currentComputer.topology,
+          imageVersion: currentComputer.imageVersion,
+        }
+      : provider.topology === "shared"
+        ? {
+            provider: provider.name,
+            placementKey: `project:${project.id}`,
+            topology: "shared" as const,
+            imageVersion: provider.placementVersion(),
+          }
+        : {
+            provider: provider.name,
+            placementKey: `workspace:${workspace.id}`,
+            topology: "isolated" as const,
+            imageVersion: provider.placementVersion(),
+          };
+
+    // Ensure the immutable placement and refresh its mirror before the agent
+    // branches from the bundle. A paused isolated computer resumes in place;
+    // it is not reprovisioned or moved during Restore.
     const ensured = await ensureProjectRuntimeComputer(provider, {
       projectId: project.id,
+      ...placement,
       repoFullName: project.fullName,
       githubToken,
       sessionEnv: runtimeSessionEnvironment(),
     });
     const computer = ensured.computer;
-    if (!computer.daytonaSandboxId) {
-      throw new Error("Ready Runtime Computer has no Daytona sandbox id.");
+    if (!computer.providerComputerId) {
+      throw new Error("Ready Runtime Computer has no provider computer id.");
+    }
+    if (provider.topology === "isolated" && !ensured.provisioned) {
+      await provider.resumeComputer(computer.providerComputerId);
     }
     if (!ensured.provisioned) {
-      await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
+      await provider.fetchMirror(computer.providerComputerId, githubToken);
     }
 
     const target = await provider.agentTarget(
-      computer.daytonaSandboxId,
+      computer.providerComputerId,
       ensured.agentSecret,
     );
     const identity: WorkspaceIdentity = {
@@ -333,18 +363,18 @@ async function restoreDaytonaWorkspace(
     : lifecycleReconciliationRequired("restore");
 }
 
-async function daytonaAgent(
+async function computeAgent(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputeRuntimeProvider,
   userId: string,
 ): Promise<{ agent: AgentClient; identity: WorkspaceIdentity }> {
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
-  if (!computer?.daytonaSandboxId || computer.status !== "ready") {
+  const computer = await computerForWorkspace(workspace);
+  if (!computer?.providerComputerId || computer.status !== "ready") {
     throw new Error("Runtime Computer is not available.");
   }
   const secret = await readRuntimeComputerSecret(computer.id);
   if (!secret) throw new Error("Runtime Computer secret is missing.");
-  const target = await provider.agentTarget(computer.daytonaSandboxId, secret);
+  const target = await provider.agentTarget(computer.providerComputerId, secret);
   return {
     agent: new AgentClient(target),
     identity: {
@@ -356,9 +386,24 @@ async function daytonaAgent(
   };
 }
 
-async function resumeDaytonaWorkspace(
+/** Resolve the persisted placement attached to a workspace. The Daytona
+ * fallback covers rows created before workspace.computer_id was populated. */
+async function computerForWorkspace(workspace: Workspace) {
+  const computer = await (workspace.computerId
+    ? getRuntimeComputer(workspace.computerId)
+    : workspace.provider === "daytona"
+      ? getRuntimeComputerByProject(workspace.projectId)
+      : null);
+  return computer &&
+    computer.projectId === workspace.projectId &&
+    computer.provider === workspace.provider
+    ? computer
+    : null;
+}
+
+async function resumeComputeWorkspace(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputeRuntimeProvider,
   userId: string,
 ) {
   if (workspace.status !== "suspended") {
@@ -370,7 +415,12 @@ async function resumeDaytonaWorkspace(
   const transitioned = await startTransition(workspace, ["suspended"], "resuming");
   if (!transitioned) return lifecycleConflict();
   try {
-    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    const computer = await computerForWorkspace(workspace);
+    if (!computer?.providerComputerId) throw new Error("Runtime Computer is not available.");
+    if (provider.topology === "isolated") {
+      await provider.resumeComputer(computer.providerComputerId);
+    }
+    const { agent, identity } = await computeAgent(workspace, provider, userId);
     await agent.resumeWorkspace(identity);
   } catch (error) {
     console.error(`Workspace ${workspace.id} resume failed`, error);
@@ -389,9 +439,9 @@ async function resumeDaytonaWorkspace(
     : lifecycleReconciliationRequired("resume");
 }
 
-async function suspendDaytonaWorkspace(
+async function suspendComputeWorkspace(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputeRuntimeProvider,
   userId: string,
 ) {
   if (workspace.status !== "ready" && workspace.status !== "idle") {
@@ -403,8 +453,12 @@ async function suspendDaytonaWorkspace(
   const transitioned = await startTransition(workspace, ["ready", "idle"], "suspending");
   if (!transitioned) return lifecycleConflict();
   try {
-    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    const { agent, identity } = await computeAgent(workspace, provider, userId);
     await agent.stopWorkspace(identity);
+    const computer = await computerForWorkspace(workspace);
+    if (provider.topology === "isolated" && computer?.providerComputerId) {
+      await provider.pauseComputer(computer.providerComputerId);
+    }
   } catch (error) {
     console.error(`Workspace ${workspace.id} suspend failed`, error);
     await restoreAfterFailure(workspace, "suspending", lifecycleError("suspend")).catch(
@@ -422,9 +476,9 @@ async function suspendDaytonaWorkspace(
     : lifecycleReconciliationRequired("suspend");
 }
 
-async function destroyDaytonaWorkspace(
+async function destroyComputeWorkspace(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputeRuntimeProvider,
   userId: string,
 ) {
   const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "archived", "failed"];
@@ -441,10 +495,17 @@ async function destroyDaytonaWorkspace(
   // already be gone (e.g. destroying an ARCHIVED workspace whose Runtime Computer
   // was reclaimed). A missing/failed agent must not block the durable cleanup.
   try {
-    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    const { agent, identity } = await computeAgent(workspace, provider, userId);
     await agent.destroyWorkspace(identity);
   } catch (error) {
     console.warn(`Workspace ${workspace.id} agent teardown skipped`, error);
+  }
+
+  if (provider.topology === "isolated") {
+    const computer = await computerForWorkspace(workspace);
+    if (computer?.providerComputerId) {
+      await provider.destroyComputer(computer.providerComputerId);
+    }
   }
 
   // Drop the Snapshot index rows: the workspace row is marked destroyed rather

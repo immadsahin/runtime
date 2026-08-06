@@ -11,8 +11,10 @@ M3 defines, and produces the **Workspace Snapshot** everything downstream builds
 ## Status
 
 - **Design:** ✅ Frozen (open decisions flagged below — confirm before building)
-- **Implementation:** 🚫 Blocked on **M3** (needs the Workspace Session, conversation
-  event channel, and the frozen Workspace Summary).
+- **Implementation:** ✅ Complete. Archive, replay, and restore vertical slices
+  are implemented and locally verified; authenticated real-Daytona acceptance
+  remains pending. The canonical current status is
+  [`PROGRESS.md`](./PROGRESS.md).
 
 ## One durable abstraction per milestone
 
@@ -208,6 +210,29 @@ restore · compression tuning · cast editing · partial restore.
    Snapshots are box-independent).
 8. **Restore onto a *different* Runtime Computer** than the original (proves
    portability).
+
+### Data-plane verifier
+
+`scripts/verify-daytona-m4.ts` turns the archive / portability / idempotency
+portions of this checklist into a credential-gated executable run. It creates a
+real Claude session, writes both a committed and uncommitted change, archives
+through the agent into all six signed Supabase upload URLs, destroys the source
+Runtime Computer, validates every manifest-addressed artifact checksum and size
+from Storage alone, restores onto a fresh Runtime Computer, and restores again
+to prove idempotency. It deliberately does not stand in for the authenticated
+Next/browser acceptance (Timeline, Replay UI, lifecycle state transitions, and
+Publish still require the complete M3/M4 manual flow).
+
+```sh
+./scripts/build-agent.sh
+pnpm verify:daytona:m4
+```
+
+It requires `DAYTONA_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, and one of `CLAUDE_CODE_OAUTH_TOKEN` or
+`ANTHROPIC_API_KEY` in `.env.local`. It cleans up both test computers and every
+object it uploaded even on failure. Optional `VERIFY_REPO`, `VERIFY_BASE`,
+`GITHUB_PAT`, and `VERIFY_OWNER_ID` follow the script header.
 
 Record it like the prior spikes (short report under `docs/architecture/`).
 

@@ -169,7 +169,65 @@ exception when unique_violation then
   raise notice 'ok: one pull request per workspace enforced';
 end $$;
 
--- 12. RLS isolates rows by owner.
+-- 12. Runtime Computer placements are provider-scoped, immutable, and retain
+-- their original image version across the legacy claim overload.
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+do $$
+declare
+  project_id uuid;
+  workspace_id uuid;
+  daytona_id uuid;
+  e2b_id uuid;
+  should_create boolean;
+begin
+  select id into project_id from projects
+    where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+  select id into workspace_id from workspaces
+    where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+
+  select runtime_computer_id, should_provision into daytona_id, should_create
+  from claim_runtime_computer(
+    project_id, 'project:' || project_id::text, 'daytona', 'shared', 'secret-1', 'runtime-computer-v1'
+  );
+  if not should_create then raise exception 'FAIL: first Daytona placement was not claimable'; end if;
+
+  -- The historical three-argument RPC must resolve the same placement and use
+  -- its existing immutable image_version rather than its legacy default.
+  select runtime_computer_id, should_provision into e2b_id, should_create
+  from claim_runtime_computer(project_id, 'secret-2');
+  if e2b_id <> daytona_id or should_create then
+    raise exception 'FAIL: legacy claim did not reuse the Daytona placement';
+  end if;
+
+  select runtime_computer_id, should_provision into e2b_id, should_create
+  from claim_runtime_computer(
+    project_id, 'workspace:' || workspace_id::text, 'e2b', 'isolated', 'secret-3', 'e2b-v1'
+  );
+  if not should_create or e2b_id = daytona_id then
+    raise exception 'FAIL: isolated E2B placement was not independently claimable';
+  end if;
+
+  begin
+    perform claim_runtime_computer(
+      project_id, 'project:' || project_id::text, 'daytona', 'shared', 'secret-4', 'different-v1'
+    );
+    raise exception 'FAIL: mutable Runtime Computer image_version was allowed';
+  exception when raise_exception then
+    if sqlerrm <> 'Runtime Computer placement is immutable' then raise; end if;
+  end;
+
+  begin
+    update runtime_computers set topology = 'isolated' where id = daytona_id;
+    raise exception 'FAIL: mutable Runtime Computer topology was allowed';
+  exception when raise_exception then
+    if sqlerrm <> 'Runtime Computer placement is immutable' then raise; end if;
+  end;
+
+  raise notice 'ok: Runtime Computer placement identity is immutable';
+end $$;
+
+-- 13. RLS isolates rows by owner.
 do $do$
 begin
   if not exists (select 1 from pg_roles where rolname = 'authed') then
@@ -204,7 +262,7 @@ begin
   raise notice 'ok: RLS hides other owners'' rows';
 end $$;
 
--- 13. RLS rejects inserts that forge another owner.
+-- 14. RLS rejects inserts that forge another owner.
 do $$
 begin
   insert into projects (owner_id, github_repo_id, full_name, owner, name)

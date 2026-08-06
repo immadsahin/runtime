@@ -1,7 +1,24 @@
 import { NextResponse } from "next/server";
 
 import { getRuntimeProvider } from "@/lib/runtime/provider";
+import type { ComputeProvider } from "@/lib/runtime/compute-provider";
 import type { RuntimeProvider, Workspace } from "@/lib/runtime/types";
+
+/** A RuntimeProvider backed by a provider-neutral Runtime Computer. */
+export type ComputeRuntimeProvider = RuntimeProvider & ComputeProvider & {
+  name: "daytona" | "e2b";
+};
+
+/**
+ * Runtime's computer routes use capability detection rather than provider
+ * classes, keeping Daytona and E2B behind the same compute seam.
+ */
+export function isComputeRuntimeProvider(
+  provider: RuntimeProvider,
+): provider is ComputeRuntimeProvider {
+  return "kind" in provider && provider.kind === "compute" &&
+    (provider.name === "daytona" || provider.name === "e2b");
+}
 
 /**
  * Resolve the RuntimeProvider that owns a workspace's compute, or an
