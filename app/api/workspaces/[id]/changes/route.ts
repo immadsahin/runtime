@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { getRuntimeComputer, getWorkspace } from "@/lib/db/repositories";
+import { hasActiveComputeWorkspace } from "@/lib/runtime/compute-lifecycle";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { isComputeRuntimeProvider } from "@/lib/runtime/resolve";
 
@@ -37,6 +38,12 @@ export async function GET(request: Request, context: RouteContext) {
 
   try {
     if (isComputeRuntimeProvider(provider)) {
+      if (!hasActiveComputeWorkspace(workspace)) {
+        return NextResponse.json(
+          { error: "Resume the workspace to view its changes." },
+          { status: 409 },
+        );
+      }
       const computer = workspace.computerId
         ? await getRuntimeComputer(workspace.computerId)
         : null;

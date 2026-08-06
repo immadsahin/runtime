@@ -4,7 +4,8 @@
 > acceptance blocked on E2B credentials and the pinned template.** This document
 > records authoritative E2B API research and the exact evidence still required
 > before Runtime can claim E2B support is verified. The provider is wired behind
-> the provider-neutral compute seam, but it has not been exercised on E2B.
+> the provider-neutral compute seam, but it has not been exercised on E2B. It is
+> disabled by default; deployment additionally requires `RUNTIME_ENABLE_E2B=true`.
 
 Runtime is a workload-agnostic execution platform. E2B is an **isolated
 Workspace Session substrate**; this work must never introduce security,

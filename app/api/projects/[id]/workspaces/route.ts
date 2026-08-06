@@ -170,46 +170,67 @@ export async function POST(request: Request, context: RouteContext) {
       if (!computer.providerComputerId) {
         throw new Error("Ready Runtime Computer has no provider computer id.");
       }
+      try {
+        // Attach before any agent operation. If an isolated provider fails
+        // below, terminal cleanup can still resolve and delete its sandbox.
+        await updateWorkspace(workspace.id, { computerId: computer.id });
 
-      // Initial provisioning clones the mirror. Every later workspace refreshes
-      // it before the agent branches from the project's default branch.
-      if (!ensured.provisioned) {
-        await provider.fetchMirror(computer.providerComputerId, githubToken);
-      }
+        // Initial provisioning clones the mirror. Every later workspace refreshes
+        // it before the agent branches from the project's default branch.
+        if (!ensured.provisioned) {
+          await provider.fetchMirror(computer.providerComputerId, githubToken);
+        }
 
-      const target = await provider.agentTarget(
-        computer.providerComputerId,
-        ensured.agentSecret,
-      );
-      const identity: WorkspaceIdentity = {
-        workspaceId: workspace.id,
-        projectId: project.id,
-        computerId: computer.id,
-        userId: owner.id,
-      };
-      const agent = new AgentClient(target);
-      const created = await agent.createWorkspace(
-        {
+        const target = await provider.agentTarget(
+          computer.providerComputerId,
+          ensured.agentSecret,
+        );
+        const identity: WorkspaceIdentity = {
           workspaceId: workspace.id,
-          repoFullName: project.fullName,
-          baseBranch: project.defaultBranch,
-          branch: workspace.branch,
-        },
-        identity,
-      );
-      await agent.startWorkspace(identity);
+          projectId: project.id,
+          computerId: computer.id,
+          userId: owner.id,
+        };
+        const agent = new AgentClient(target);
+        const created = await agent.createWorkspace(
+          {
+            workspaceId: workspace.id,
+            repoFullName: project.fullName,
+            baseBranch: project.defaultBranch,
+            branch: workspace.branch,
+          },
+          identity,
+        );
+        await agent.startWorkspace(identity);
 
-      await updateWorkspace(workspace.id, {
-        status: "ready",
-        phase: "claude_ready",
-        computerId: computer.id,
-        tmuxSession: `ws-${workspace.id}`,
-        agentWorkspaceId: workspace.id,
-        worktreePath: created.worktree,
-        errorMessage: null,
-        touchActive: true,
-      });
-      return NextResponse.json({ workspace: { id: workspace.id } }, { status: 201 });
+        await updateWorkspace(workspace.id, {
+          status: "ready",
+          phase: "claude_ready",
+          computerId: computer.id,
+          tmuxSession: `ws-${workspace.id}`,
+          agentWorkspaceId: workspace.id,
+          worktreePath: created.worktree,
+          errorMessage: null,
+          touchActive: true,
+        });
+        return NextResponse.json({ workspace: { id: workspace.id } }, { status: 201 });
+      } catch (error) {
+        // An isolated placement belongs to this one workspace, so it must not
+        // survive a failed create and become an unreachable billed sandbox.
+        if (provider.topology === "isolated") {
+          await provider.destroyComputer(computer.providerComputerId).catch(
+            (cleanupError: unknown) =>
+              console.error(`Workspace ${workspace.id} E2B cleanup failed`, cleanupError),
+          );
+          await markRuntimeComputerStoppedIfReady(
+            computer.id,
+            computer.providerComputerId,
+          ).catch((cleanupError: unknown) =>
+            console.error(`Workspace ${workspace.id} computer cleanup state failed`, cleanupError),
+          );
+        }
+        throw error;
+      }
     }
 
     const result = await provider.createWorkspace({

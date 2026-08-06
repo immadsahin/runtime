@@ -7,6 +7,7 @@ import {
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { hasActiveComputeWorkspace } from "@/lib/runtime/compute-lifecycle";
 import {
   isComputeRuntimeProvider,
   providerErrorResponse,
@@ -46,6 +47,12 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!isComputeRuntimeProvider(provider)) {
     return NextResponse.json(
       { error: "Workspace summaries require a Runtime Computer provider." },
+      { status: 409 },
+    );
+  }
+  if (!hasActiveComputeWorkspace(workspace)) {
+    return NextResponse.json(
+      { error: "Resume this workspace before reading its live summary." },
       { status: 409 },
     );
   }

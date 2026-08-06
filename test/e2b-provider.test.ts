@@ -10,6 +10,7 @@ import {
   type E2BSandbox,
   type E2BSandboxClient,
 } from "@/lib/runtime/e2b-provider";
+import { getRuntimeProvider, resetRuntimeProvider } from "@/lib/runtime/provider";
 
 type Calls = {
   created: number;
@@ -87,6 +88,25 @@ test("E2B provider constructs without credentials and exposes isolated placement
   assert.equal(provider.kind, "compute");
   assert.equal(provider.topology, "isolated");
   assert.equal(provider.placementVersion(), "runtime-computer-e2b-v1");
+});
+
+test("E2B provider selection remains disabled until explicitly enabled", () => {
+  const previousProvider = process.env.RUNTIME_PROVIDER;
+  const previousEnabled = process.env.RUNTIME_ENABLE_E2B;
+  process.env.RUNTIME_PROVIDER = "e2b";
+  delete process.env.RUNTIME_ENABLE_E2B;
+  resetRuntimeProvider();
+  try {
+    assert.throws(() => getRuntimeProvider(), /E2B is disabled/);
+    process.env.RUNTIME_ENABLE_E2B = "true";
+    assert.equal(getRuntimeProvider().name, "e2b");
+  } finally {
+    resetRuntimeProvider();
+    if (previousProvider === undefined) delete process.env.RUNTIME_PROVIDER;
+    else process.env.RUNTIME_PROVIDER = previousProvider;
+    if (previousEnabled === undefined) delete process.env.RUNTIME_ENABLE_E2B;
+    else process.env.RUNTIME_ENABLE_E2B = previousEnabled;
+  }
 });
 
 test("E2B agent host is always normalized to an HTTPS base URL", () => {

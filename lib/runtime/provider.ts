@@ -1,4 +1,4 @@
-import { providerName } from "@/lib/env";
+import { e2bEnabled, providerName } from "@/lib/env";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { E2BRuntimeProvider } from "@/lib/runtime/e2b-provider";
 import { LocalRuntimeProvider } from "@/lib/runtime/local-provider";
@@ -27,6 +27,11 @@ export function getRuntimeProvider(): RuntimeProvider {
       cached = new ModalRuntimeProvider();
       break;
     case "e2b":
+      if (!e2bEnabled()) {
+        throw new Error(
+          "E2B is disabled. Set RUNTIME_ENABLE_E2B=true only after the pinned template passes real-sandbox acceptance.",
+        );
+      }
       cached = new E2BRuntimeProvider();
       break;
     default:

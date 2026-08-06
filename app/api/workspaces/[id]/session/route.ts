@@ -9,6 +9,7 @@ import {
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
+import { hasActiveComputeWorkspace } from "@/lib/runtime/compute-lifecycle";
 import {
   isComputeRuntimeProvider,
   providerErrorResponse,
@@ -53,6 +54,12 @@ export async function POST(request: Request, context: RouteContext) {
   if (!isComputeRuntimeProvider(provider)) {
     return NextResponse.json(
       { error: "Live sessions require a Runtime Computer provider." },
+      { status: 409 },
+    );
+  }
+  if (!hasActiveComputeWorkspace(workspace)) {
+    return NextResponse.json(
+      { error: "Resume this workspace before attaching to its live session." },
       { status: 409 },
     );
   }

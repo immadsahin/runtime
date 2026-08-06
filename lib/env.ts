@@ -33,6 +33,7 @@ type EnvKey =
   | "E2B_API_KEY"
   | "E2B_TEMPLATE"
   | "E2B_SANDBOX_TIMEOUT_MS"
+  | "RUNTIME_ENABLE_E2B"
   // Cross-compiled runtime-agent binary uploaded on provision (decision 1A).
   | "RUNTIME_AGENT_BINARY_PATH"
   // Claude Code
@@ -73,4 +74,16 @@ export function providerName(): ProviderName {
   throw new Error(
     `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", "daytona", or "e2b".`,
   );
+}
+
+/**
+ * E2B remains opt-in until the pinned Runtime template and browser transport
+ * have passed the real-sandbox acceptance suite. Keep this independent of the
+ * provider name so a deployment cannot enable E2B accidentally.
+ */
+export function e2bEnabled(): boolean {
+  const enabled = optionalEnv("RUNTIME_ENABLE_E2B");
+  if (!enabled || enabled === "false") return false;
+  if (enabled === "true") return true;
+  throw new Error('RUNTIME_ENABLE_E2B must be either "true" or "false".');
 }
