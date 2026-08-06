@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getRuntimeComputer, getWorkspace } from "@/lib/db/repositories";
-import { hasActiveComputeWorkspace } from "@/lib/runtime/compute-lifecycle";
+import { getRuntimeComputer, getWorkspace, updateWorkspace } from "@/lib/db/repositories";
+import {
+  hasActiveComputeWorkspace,
+  isAutoPausedComputeWorkspace,
+} from "@/lib/runtime/compute-lifecycle";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { isComputeRuntimeProvider } from "@/lib/runtime/resolve";
 
@@ -56,6 +59,16 @@ export async function GET(request: Request, context: RouteContext) {
       ) {
         return NextResponse.json(
           { error: "The interactive worktree is not available yet." },
+          { status: 409 },
+        );
+      }
+      if (await isAutoPausedComputeWorkspace(computer, provider)) {
+        await updateWorkspace(workspace.id, {
+          status: "suspended",
+          errorMessage: "Runtime Computer paused after inactivity. Resume the workspace to continue.",
+        });
+        return NextResponse.json(
+          { error: "Runtime Computer paused after inactivity. Resume the workspace to view its changes." },
           { status: 409 },
         );
       }

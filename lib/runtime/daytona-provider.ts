@@ -6,6 +6,7 @@ import { Daytona, type Sandbox } from "@daytonaio/sdk";
 import { optionalEnv, requireEnv } from "@/lib/env";
 import type {
   AgentTarget,
+  ComputerState,
   ComputeProvider,
   ProvisionComputerInput as ComputeProvisionComputerInput,
   ProvisionedComputer as ComputeProvisionedComputer,
@@ -302,16 +303,21 @@ export class DaytonaRuntimeProvider implements RuntimeProvider, ComputeProvider 
     });
   }
 
-  /** Whether the box is still up and able to host sessions. */
-  async computerAlive(sandboxId: string): Promise<boolean> {
-    if (!sandboxId) return false;
+  /** Inspect the always-on box without opening an agent connection. */
+  async computerState(sandboxId: string): Promise<ComputerState> {
+    if (!sandboxId) return "missing";
     try {
       const sandbox = await this.daytona().get(sandboxId);
-      return sandbox.state === "started";
+      return sandbox.state === "started" ? "running" : "missing";
     } catch (error) {
       console.error(`Could not read Daytona computer ${sandboxId}`, error);
-      return false;
+      return "missing";
     }
+  }
+
+  /** Whether the box is still up and able to host sessions. */
+  async computerAlive(sandboxId: string): Promise<boolean> {
+    return (await this.computerState(sandboxId)) === "running";
   }
 
   /** Tear the box down (destroys all worktrees/sessions inside it). */

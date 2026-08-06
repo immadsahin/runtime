@@ -14,6 +14,7 @@ import type {
 } from "@/lib/runtime/types";
 
 export type ComputeTopology = "shared" | "isolated";
+export type ComputerState = "running" | "paused" | "missing";
 
 /** Everything the runtime-agent client needs to reach one computer. */
 export type AgentTarget = {
@@ -62,6 +63,11 @@ export interface ComputeProvider {
   placementVersion(): string;
 
   provisionComputer(input: ProvisionComputerInput): Promise<ProvisionedComputer>;
+  /**
+   * Inspect provider state without attaching to the agent. This distinction is
+   * necessary for isolated providers where an attach can resume billed compute.
+   */
+  computerState(computerId: string): Promise<ComputerState>;
   computerAlive(computerId: string): Promise<boolean>;
   /** Suspend/resume apply only to isolated computers; shared providers reject them. */
   pauseComputer(computerId: string): Promise<void>;

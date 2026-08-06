@@ -5,9 +5,13 @@ import {
   getRuntimeComputer,
   getWorkspace,
   readRuntimeComputerSecret,
+  updateWorkspace,
 } from "@/lib/db/repositories";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { hasActiveComputeWorkspace } from "@/lib/runtime/compute-lifecycle";
+import {
+  hasActiveComputeWorkspace,
+  isAutoPausedComputeWorkspace,
+} from "@/lib/runtime/compute-lifecycle";
 import {
   isComputeRuntimeProvider,
   providerErrorResponse,
@@ -68,6 +72,16 @@ export async function GET(_request: Request, context: RouteContext) {
   ) {
     return NextResponse.json(
       { error: "This project has no Runtime Computer." },
+      { status: 409 },
+    );
+  }
+  if (await isAutoPausedComputeWorkspace(computer, provider)) {
+    await updateWorkspace(workspace.id, {
+      status: "suspended",
+      errorMessage: "Runtime Computer paused after inactivity. Resume the workspace to continue.",
+    });
+    return NextResponse.json(
+      { error: "Runtime Computer paused after inactivity. Resume the workspace to continue." },
       { status: 409 },
     );
   }

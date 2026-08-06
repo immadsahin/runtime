@@ -8,6 +8,7 @@ import {
   getProject,
   getRuntimeComputerByPlacement,
   markRuntimeComputerStoppedIfReady,
+  updateRuntimeComputer,
   updateWorkspace,
 } from "@/lib/db/repositories";
 import { optionalEnv } from "@/lib/env";
@@ -227,10 +228,16 @@ export async function POST(request: Request, context: RouteContext) {
             console.error(`Workspace ${workspace.id} E2B cleanup failed`, cleanupError);
             throw cleanupError;
           }
-          await markRuntimeComputerStoppedIfReady(
-            computer.id,
-            computer.providerComputerId,
-          );
+          // This placement is owned solely by the failed workspace. Retire its
+          // now-deleted provider handle so a later terminal destroy does not
+          // retry deletion of an already-confirmed-absent billed sandbox.
+          await updateRuntimeComputer(computer.id, {
+            status: "stopped",
+            providerComputerId: null,
+            agentBaseUrl: null,
+            provisionTimings: null,
+            errorMessage: "Runtime Computer was deleted after workspace provisioning failed.",
+          });
         }
         throw error;
       }

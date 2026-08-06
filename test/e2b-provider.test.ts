@@ -168,11 +168,18 @@ test("E2B treats paused computers as resumable placements and delegates lifecycl
     const provider = new E2BRuntimeProvider(fakeClient(recorded, sandbox(), "paused"));
 
     assert.equal(await provider.computerAlive("e2b-1"), true);
+    assert.equal(await provider.computerState("e2b-1"), "paused");
+    await assert.rejects(
+      provider.agentTarget("e2b-1", "agent-secret"),
+      /paused; resume its workspace/,
+    );
     await provider.pauseComputer("e2b-1");
     await provider.resumeComputer("e2b-1");
     await provider.destroyComputer("e2b-1");
 
     assert.deepEqual(recorded.paused, ["e2b-1"]);
+    // A normal agent lookup must not attach to (and therefore resume) a
+    // timeout-paused sandbox. Only the explicit lifecycle resume may connect.
     assert.deepEqual(recorded.connected, ["e2b-1"]);
     assert.deepEqual(recorded.killed, ["e2b-1"]);
 

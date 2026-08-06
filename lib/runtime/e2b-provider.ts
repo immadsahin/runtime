@@ -6,6 +6,7 @@ import { Sandbox } from "e2b";
 import { optionalEnv, requireEnv } from "@/lib/env";
 import type {
   AgentTarget,
+  ComputerState,
   ComputeProvider,
   ProvisionComputerInput,
   ProvisionedComputer,
@@ -238,17 +239,23 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
     }
   }
 
-  async computerAlive(computerId: string): Promise<boolean> {
-    if (!computerId) return false;
+  /** Inspect state without connecting: connecting a paused box resumes it. */
+  async computerState(computerId: string): Promise<ComputerState> {
+    if (!computerId) return "missing";
     try {
       const state = (await this.client.getInfo(computerId, { apiKey: this.apiKey() })).state;
-      // A paused isolated computer still owns its immutable placement and can
-      // be resumed in place; only a missing/terminated resource is stale.
-      return state === "running" || state === "paused";
+      if (state === "running" || state === "paused") return state;
+      return "missing";
     } catch (error) {
       console.error(`Could not read E2B computer ${computerId}`, error);
-      return false;
+      return "missing";
     }
+  }
+
+  async computerAlive(computerId: string): Promise<boolean> {
+    // A paused isolated computer still owns its immutable placement and can be
+    // resumed in place; only a missing/terminated resource is stale.
+    return (await this.computerState(computerId)) !== "missing";
   }
 
   /** Pause preserves the isolated sandbox's memory and filesystem. */
@@ -273,6 +280,15 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
   }
 
   async agentTarget(computerId: string, secret: string): Promise<AgentTarget> {
+    const state = await this.computerState(computerId);
+    if (state === "paused") {
+      throw new Error(
+        `E2B computer ${computerId} is paused; resume its workspace before attaching to the agent.`,
+      );
+    }
+    if (state !== "running") {
+      throw new Error(`E2B computer ${computerId} is not running.`);
+    }
     const sandbox = await this.client.connect(computerId, { apiKey: this.apiKey() });
     const baseUrl = e2bAgentBaseUrl(sandbox.getHost(AGENT_PORT));
     return { controlBaseUrl: baseUrl, controlHeaders: {}, browserBaseUrl: baseUrl, secret };
