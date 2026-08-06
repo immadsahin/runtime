@@ -11,6 +11,7 @@ import {
   ArchiveWorkspaceRequest,
   CreateWorkspaceRequest,
   ErrorResponse,
+  RestoreWorkspaceRequest,
   type RuntimeTokenClaims,
   WorkspaceSummary,
 } from "@/lib/runtime/agent-protocol";
@@ -86,6 +87,20 @@ export class AgentClient {
       body,
     );
     return parseManifest(raw);
+  }
+
+  /**
+   * Restore an archived workspace: the agent downloads the tree + conversation
+   * via the supplied signed URLs, rebuilds and verifies the worktree, and
+   * relaunches Claude with `--continue`. Rejects (agent 500) if verification
+   * fails — Claude is not booted into a broken restore.
+   */
+  async restoreWorkspace(
+    identity: WorkspaceIdentity,
+    req: RestoreWorkspaceRequest,
+  ): Promise<unknown> {
+    const body = RestoreWorkspaceRequest.parse(req);
+    return this.post(`/workspaces/${identity.workspaceId}/restore`, identity, body);
   }
 
   destroyWorkspace(identity: WorkspaceIdentity): Promise<unknown> {

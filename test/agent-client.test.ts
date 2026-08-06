@@ -117,6 +117,57 @@ test("archiveWorkspace rejects a malformed manifest response", async () => {
   );
 });
 
+test("restoreWorkspace posts branch, sessionId, and download URLs", async () => {
+  let seenUrl = "";
+  let seenBody: unknown = null;
+  const fakeFetch = (async (url: string, init: RequestInit) => {
+    seenUrl = url;
+    seenBody = JSON.parse(init.body as string);
+    return new Response(JSON.stringify({ result: "ws-1" }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const client = new AgentClient(target, fakeFetch);
+  await client.restoreWorkspace(identity, {
+    branch: "feat/x",
+    baseBranch: "main",
+    sessionId: "sess-1",
+    downloads: [
+      { artifact: "bundle", url: "https://storage.example/b?token=t" },
+      { artifact: "patch", url: "https://storage.example/p?token=t" },
+      { artifact: "conversation", url: "https://storage.example/c?token=t" },
+    ],
+  });
+
+  assert.equal(seenUrl, "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/restore");
+  assert.deepEqual(seenBody, {
+    branch: "feat/x",
+    baseBranch: "main",
+    sessionId: "sess-1",
+    downloads: [
+      { artifact: "bundle", url: "https://storage.example/b?token=t" },
+      { artifact: "patch", url: "https://storage.example/p?token=t" },
+      { artifact: "conversation", url: "https://storage.example/c?token=t" },
+    ],
+  });
+});
+
+test("restoreWorkspace rejects an invalid request body before calling the agent", async () => {
+  let called = false;
+  const fakeFetch = (async () => {
+    called = true;
+    return new Response("{}", { status: 200 });
+  }) as unknown as typeof fetch;
+  const client = new AgentClient(target, fakeFetch);
+  await assert.rejects(() =>
+    client.restoreWorkspace(identity, {
+      branch: "",
+      sessionId: "s",
+      downloads: [],
+    }),
+  );
+  assert.equal(called, false);
+});
+
 test("ptyUrl builds a wss signed-preview URL carrying a Runtime token", () => {
   const client = new AgentClient(target);
   const url = new URL(client.ptyUrl(identity));

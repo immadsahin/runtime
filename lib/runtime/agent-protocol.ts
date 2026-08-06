@@ -93,6 +93,28 @@ export const ArchiveWorkspaceRequest = z.object({
 });
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequest>;
 
+/** One signed download URL for a Snapshot artifact the agent reads at Restore. */
+export const RestoreDownload = z.object({
+  artifact: z.string().min(1),
+  url: z.string().url(),
+});
+export type RestoreDownload = z.infer<typeof RestoreDownload>;
+
+/**
+ * Inputs to rebuild an archived Session on a (possibly fresh) box: the branch to
+ * check out, the Claude sessionId to place the conversation under (so
+ * `claude --continue` resumes the exact session), and signed download URLs for
+ * the tree (bundle + patch) and conversation JSONL. The agent materializes,
+ * verifies, and only then relaunches Claude.
+ */
+export const RestoreWorkspaceRequest = z.object({
+  branch: z.string().min(1),
+  baseBranch: z.string().optional(),
+  sessionId: z.string().min(1).nullable(),
+  downloads: z.array(RestoreDownload).min(1),
+});
+export type RestoreWorkspaceRequest = z.infer<typeof RestoreWorkspaceRequest>;
+
 export const ErrorCode = z.enum([
   "WORKSPACE_NOT_FOUND",
   "UNAUTHORIZED",
