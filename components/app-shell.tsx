@@ -1,17 +1,13 @@
 import Image from "next/image";
 import Link from "next/link";
-import { FolderGit2, HardDrive, LogOut, Settings2, Terminal } from "lucide-react";
+import { HardDrive, LogOut, Terminal } from "lucide-react";
 
 import { signOut } from "@/app/auth/actions";
 import { Button } from "@/components/ui/button";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { cn } from "@/lib/utils";
 
-const nav = [
-  { href: "/", label: "Projects", icon: FolderGit2 },
-  { href: "/workspaces", label: "Workspaces", icon: HardDrive },
-  { href: "/setup", label: "Setup", icon: Settings2 },
-];
+const nav = [{ href: "/", label: "Workspaces", icon: HardDrive }];
 
 export async function AppShell({
   children,
