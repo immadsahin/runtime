@@ -9,12 +9,15 @@ export const dynamic = "force-dynamic";
 
 export default async function WorkspacePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ prompt?: string }>;
 }) {
   if (!(await getOwnerSafe())) redirect("/signin");
 
   const { id } = await params;
+  const { prompt } = await searchParams;
   const workspace = await getWorkspace(id);
   if (!workspace) notFound();
   const project = await getProject(workspace.projectId);
@@ -31,6 +34,7 @@ export default async function WorkspacePage({
         workspace={workspace}
         workspaces={workspaces}
         pullRequest={pullRequest}
+        initialPrompt={prompt}
       />
     </AppShell>
   );

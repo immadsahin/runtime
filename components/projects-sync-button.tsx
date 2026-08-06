@@ -5,10 +5,15 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 type SyncResponse = { synced?: number; discovered?: number; error?: string };
 
-export function ProjectsSyncButton() {
+export function ProjectsSyncButton({
+  align = "end",
+}: {
+  align?: "start" | "center" | "end";
+}) {
   const router = useRouter();
   const [isSyncing, startSync] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
@@ -40,14 +45,21 @@ export function ProjectsSyncButton() {
     });
   }
 
+  const alignment =
+    align === "center"
+      ? "items-center text-center"
+      : align === "start"
+        ? "items-start text-left"
+        : "items-end text-right";
+
   return (
-    <div className="flex flex-col items-end gap-1.5">
+    <div className={cn("flex flex-col gap-1.5", alignment)}>
       <Button onClick={sync} disabled={isSyncing} size="sm">
         <RefreshCw className={isSyncing ? "animate-spin" : undefined} />
         {isSyncing ? "Synchronizing" : "Sync repositories"}
       </Button>
       {message && (
-        <p aria-live="polite" className="text-muted-foreground max-w-64 text-right text-xs">
+        <p aria-live="polite" className="text-muted-foreground max-w-64 text-xs">
           {message}
         </p>
       )}

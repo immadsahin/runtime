@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   CheckCircle2,
   ChevronDown,
-  CircleDot,
   FileDiff,
   GitBranch,
   GitPullRequest,
@@ -20,6 +19,7 @@ import { useState } from "react";
 
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import { WorkspaceLifecycleControls } from "@/components/workspace-lifecycle-controls";
+import { SessionComposer } from "@/components/session-composer";
 import { WorkspacePublishPanel } from "@/components/workspace-publish-panel";
 import { WorkspaceSession } from "@/components/workspace-session";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
@@ -32,14 +32,18 @@ export function WorkspaceStudio({
   workspace,
   workspaces,
   pullRequest,
+  initialPrompt,
 }: {
   project: Project;
   workspace: Workspace;
   workspaces: Workspace[];
   pullRequest: WorkspacePullRequest | null;
+  /** First prompt carried in from the new-session screen, sent once connected. */
+  initialPrompt?: string;
 }) {
   const [activeTab, setActiveTab] = useState<SideTab>("diff");
   const [rightOpen, setRightOpen] = useState(true);
+  const [showTerminal, setShowTerminal] = useState(false);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && workspace.provider === "daytona";
 
@@ -50,22 +54,21 @@ export function WorkspaceStudio({
           <TerminalSquare />
         </Link>
         <div className="studio-rail-nav">
-          <Link href="/" title="Projects"><Layers3 /></Link>
-          <Link href="/workspaces" className="is-active" title="Workspaces"><GitBranch /></Link>
-          <Link href={`/projects/${project.id}`} title="Project"><CircleDot /></Link>
+          <Link href="/" className="is-active" title="Workspaces"><Layers3 /></Link>
+          <Link href="/new" title="New session"><Plus /></Link>
         </div>
         <div className="studio-avatar" aria-label="Account">R</div>
       </aside>
 
       <aside className="studio-sidebar">
         <div className="studio-project-head">
-          <Link href={`/projects/${project.id}`} className="studio-back"><ArrowLeft /> Projects</Link>
+          <Link href="/" className="studio-back"><ArrowLeft /> Home</Link>
           <p className="studio-eyebrow">PROJECT</p>
           <h1 title={project.fullName}>{project.fullName}</h1>
           <span><GitBranch /> {project.defaultBranch}</span>
         </div>
-        <Link href={`/projects/${project.id}`} className="studio-new-thread">
-          <Plus /> New workspace
+        <Link href="/new" className="studio-new-thread">
+          <Plus /> New session
         </Link>
         <div className="studio-thread-label"><span>WORKSPACES</span><span>{workspaces.length}</span></div>
         <nav className="studio-thread-list" aria-label="Project workspaces">
@@ -103,27 +106,49 @@ export function WorkspaceStudio({
           </div>
           <div className="studio-header-actions">
             {workspace.status === "ready" && <span className="studio-ready"><CheckCircle2 /> Ready</span>}
+            {hasLiveSession && (
+              <button
+                className={cn("studio-icon-button", showTerminal && "is-active")}
+                onClick={() => setShowTerminal((open) => !open)}
+                title={showTerminal ? "Hide terminal" : "Show terminal"}
+              >
+                <TerminalSquare />
+              </button>
+            )}
             <button className="studio-icon-button" onClick={() => setRightOpen((open) => !open)} title="Toggle inspector">
               {rightOpen ? <PanelRightClose /> : <FileDiff />}
             </button>
           </div>
         </header>
 
-          <div className="studio-conversation">
-            {hasLiveSession ? (
-              <WorkspaceSession workspaceId={workspace.id} branch={workspace.branch} />
-            ) : (
+          {hasLiveSession ? (
+            <WorkspaceSession
+              workspaceId={workspace.id}
+              showTerminal={showTerminal}
+              initialPrompt={initialPrompt}
+            />
+          ) : (
+            <div className="studio-offline">
               <div className="studio-empty-chat">
                 <div className="studio-empty-icon"><MessageSquarePlus /></div>
                 <h3>Live session unavailable</h3>
                 <p>
                   {isReady
-                    ? "Live terminal sessions require the Daytona Runtime provider."
+                    ? "Live sessions require the Daytona Runtime provider."
                     : "The workspace session will attach when provisioning completes."}
                 </p>
               </div>
-            )}
-          </div>
+              <SessionComposer
+                onSend={() => {}}
+                canSend={false}
+                disabledPlaceholder={
+                  isReady
+                    ? "Live sessions require the Daytona Runtime provider"
+                    : "The session will attach once the workspace is ready"
+                }
+              />
+            </div>
+          )}
       </section>
 
       {rightOpen && (
