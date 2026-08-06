@@ -14,7 +14,9 @@ into Runtime.
 
 ## Entry gate
 
-The implementation below began only after all of these were true:
+E2B deployment and rollout require all of the following conditions. The
+provider remains disabled until they are met; local contract coverage is not
+evidence that an E2B Runtime Computer works in production:
 
 1. M3 has passed its authenticated real-Daytona Workspace Session acceptance
    test.
@@ -26,7 +28,9 @@ The implementation below began only after all of these were true:
    current Daytona behavior.
 
 E2B is not a shortcut around those gates. It is the first consumer of their
-stable execution, agent, and snapshot contracts.
+stable execution, agent, and snapshot contracts. Consult
+[`PROGRESS.md`](./PROGRESS.md) and the linked real-provider reports for the
+current status of the Daytona and dogfood prerequisites.
 
 ## Immutable placement model
 

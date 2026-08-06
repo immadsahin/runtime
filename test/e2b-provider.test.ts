@@ -14,6 +14,7 @@ import { getRuntimeProvider, resetRuntimeProvider } from "@/lib/runtime/provider
 
 type Calls = {
   created: number;
+  lifecycle?: { onTimeout: { action: "pause"; keepMemory: boolean } };
   connected: string[];
   paused: string[];
   killed: string[];
@@ -39,8 +40,9 @@ function fakeClient(
   state = "running",
 ): E2BSandboxClient {
   return {
-    create: async () => {
+    create: async (_template, options) => {
       calls.created += 1;
+      calls.lifecycle = options.lifecycle;
       return box;
     },
     connect: async (id) => {
@@ -135,6 +137,7 @@ test("E2B provisions agent upload, boot, health, and cleans up a failed provisio
 
     assert.equal(provisioned.computerId, "e2b-1");
     assert.equal(provisioned.controlBaseUrl, "https://agent.e2b.example.test");
+    assert.deepEqual(recorded.lifecycle, { onTimeout: { action: "pause", keepMemory: true } });
     assert.deepEqual(recorded.uploads, ["/home/runtime/runtime-agent.gz"]);
     assert.ok(recorded.commands.some(({ background }) => background));
     assert.equal(provisioned.timings.stages.map((stage) => stage.stage).join(","),
@@ -146,6 +149,16 @@ test("E2B provisions agent upload, boot, health, and cleans up a failed provisio
     const failingProvider = new E2BRuntimeProvider(fakeClient(failed, failingBox));
     await assert.rejects(failingProvider.provisionComputer({ secret: "agent-secret" }), /upload failed/);
     assert.deepEqual(failed.killed, ["e2b-failed"]);
+
+    const failedCleanup = calls();
+    const failedCleanupBox = sandbox("e2b-cleanup-failed");
+    failedCleanupBox.files.write = async () => { throw new Error("upload failed"); };
+    const failedCleanupClient = fakeClient(failedCleanup, failedCleanupBox);
+    failedCleanupClient.kill = async () => false;
+    await assert.rejects(
+      new E2BRuntimeProvider(failedCleanupClient).provisionComputer({ secret: "agent-secret" }),
+      /cleanup also failed for e2b-cleanup-failed/,
+    );
   });
 });
 
@@ -162,5 +175,19 @@ test("E2B treats paused computers as resumable placements and delegates lifecycl
     assert.deepEqual(recorded.paused, ["e2b-1"]);
     assert.deepEqual(recorded.connected, ["e2b-1"]);
     assert.deepEqual(recorded.killed, ["e2b-1"]);
+
+    const killFailure = fakeClient(calls(), sandbox());
+    killFailure.kill = async () => { throw new Error("E2B delete failed"); };
+    await assert.rejects(
+      new E2BRuntimeProvider(killFailure).destroyComputer("e2b-1"),
+      /E2B delete failed/,
+    );
+
+    const killNotConfirmed = fakeClient(calls(), sandbox());
+    killNotConfirmed.kill = async () => false;
+    await assert.rejects(
+      new E2BRuntimeProvider(killNotConfirmed).destroyComputer("e2b-1"),
+      /did not confirm deletion/,
+    );
   });
 });

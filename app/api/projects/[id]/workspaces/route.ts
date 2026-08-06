@@ -218,15 +218,18 @@ export async function POST(request: Request, context: RouteContext) {
         // An isolated placement belongs to this one workspace, so it must not
         // survive a failed create and become an unreachable billed sandbox.
         if (provider.topology === "isolated") {
-          await provider.destroyComputer(computer.providerComputerId).catch(
-            (cleanupError: unknown) =>
-              console.error(`Workspace ${workspace.id} E2B cleanup failed`, cleanupError),
-          );
+          try {
+            await provider.destroyComputer(computer.providerComputerId);
+          } catch (cleanupError) {
+            // Retain the ready placement and workspace failure state so the
+            // operator can retry terminal cleanup; never claim a billed E2B
+            // sandbox was deleted when the provider rejected the request.
+            console.error(`Workspace ${workspace.id} E2B cleanup failed`, cleanupError);
+            throw cleanupError;
+          }
           await markRuntimeComputerStoppedIfReady(
             computer.id,
             computer.providerComputerId,
-          ).catch((cleanupError: unknown) =>
-            console.error(`Workspace ${workspace.id} computer cleanup state failed`, cleanupError),
           );
         }
         throw error;

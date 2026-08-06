@@ -71,6 +71,9 @@ export type E2BSandboxClient = {
       apiKey: string;
       timeoutMs: number;
       metadata: Record<string, string>;
+      lifecycle: {
+        onTimeout: { action: "pause"; keepMemory: boolean };
+      };
     },
   ) => Promise<E2BSandbox>;
   connect: (sandboxId: string, options: { apiKey: string }) => Promise<E2BSandbox>;
@@ -190,6 +193,10 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
           apiKey,
           timeoutMs: this.timeoutMs(),
           metadata: { ...input.labels, "runtime.role": "computer", "runtime.topology": "isolated" },
+          // A Runtime workspace retains its immutable placement across an E2B
+          // timeout. Preserve its process state and require its explicit
+          // lifecycle Resume action rather than letting E2B terminate it.
+          lifecycle: { onTimeout: { action: "pause", keepMemory: true } },
         }),
       );
       const io = this.boxIO(sandbox);
@@ -215,9 +222,17 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
       };
     } catch (error) {
       if (sandbox) {
-        await this.client.kill(sandbox.sandboxId, { apiKey }).catch((cleanupError: unknown) =>
-          console.error("Could not delete failed E2B computer", cleanupError),
-        );
+        try {
+          await this.destroyComputer(sandbox.sandboxId);
+        } catch (cleanupError) {
+          // The database row cannot yet hold a provider id because the agent
+          // never became ready. Surface the exact sandbox id in the error and
+          // preserve both causes so an operator can clean it up immediately.
+          throw new AggregateError(
+            [error, cleanupError],
+            `E2B provisioning failed and cleanup also failed for ${sandbox.sandboxId}.`,
+          );
+        }
       }
       throw error;
     }
@@ -248,10 +263,12 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
 
   async destroyComputer(computerId: string): Promise<void> {
     if (!computerId) return;
-    try {
-      await this.client.kill(computerId, { apiKey: this.apiKey() });
-    } catch (error) {
-      console.error(`Could not delete E2B computer ${computerId}`, error);
+    // Do not hide a provider deletion failure. Callers must keep the persisted
+    // placement/workspace retryable rather than reporting an orphaned billed
+    // sandbox as successfully destroyed.
+    const deleted = await this.client.kill(computerId, { apiKey: this.apiKey() });
+    if (!deleted) {
+      throw new Error(`E2B did not confirm deletion of computer ${computerId}.`);
     }
   }
 

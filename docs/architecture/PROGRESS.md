@@ -140,7 +140,7 @@ security-research feature. Full research, the provider boundary, capability
 matrix, and real-sandbox verification plan live in
 [`e2b-provider-spike.md`](./e2b-provider-spike.md).
 
-**Do not begin implementation until:**
+**Do not enable E2B in a deployment until:**
 
 1. M3 Phase 6 real-Daytona acceptance is recorded;
 2. M4 real-Daytona archive/replay/restore acceptance is recorded;
@@ -148,9 +148,8 @@ matrix, and real-sandbox verification plan live in
 4. the provider-neutral `ComputeProvider` refactor has preserved current
    Daytona behavior.
 
-Then execute, in order: immutable Workspace Specification → ComputeProvider
-seam → creation-only Scheduler → E2B template/provider verification → external
-consumer. No workload-specific logic belongs in Runtime.
+Then execute the real E2B template/provider verification before enabling an
+external consumer. No workload-specific logic belongs in Runtime.
 
 ---
 

@@ -503,8 +503,18 @@ async function destroyComputeWorkspace(
 
   if (provider.topology === "isolated") {
     const computer = await computerForWorkspace(workspace);
-    if (computer?.providerComputerId) {
-      await provider.destroyComputer(computer.providerComputerId);
+    try {
+      if (computer?.providerComputerId) {
+        await provider.destroyComputer(computer.providerComputerId);
+      }
+    } catch (error) {
+      // A failed provider deletion leaves the persisted placement intact and
+      // restores the pre-destroy state so the operator can retry cleanup.
+      console.error(`Workspace ${workspace.id} computer destroy failed`, error);
+      await restoreAfterFailure(workspace, "destroying", lifecycleError("destroy")).catch(
+        (updateError: unknown) => console.error("Could not persist destroy failure", updateError),
+      );
+      return NextResponse.json({ error: lifecycleError("destroy") }, { status: 502 });
     }
   }
 

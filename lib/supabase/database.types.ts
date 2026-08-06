@@ -204,10 +204,10 @@ export type Database = {
           },
           {
             foreignKeyName: "workspaces_computer_fkey";
-            columns: ["owner_id", "computer_id"];
+            columns: ["owner_id", "project_id", "computer_id"];
             isOneToOne: false;
             referencedRelation: "runtime_computers";
-            referencedColumns: ["owner_id", "id"];
+            referencedColumns: ["owner_id", "project_id", "id"];
           },
         ];
       };
