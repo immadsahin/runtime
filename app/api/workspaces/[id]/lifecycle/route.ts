@@ -3,23 +3,29 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import {
   createWorkspaceSnapshot,
+  getProject,
   getRuntimeComputerByProject,
   getWorkspace,
+  listWorkspaceSnapshots,
   readRuntimeComputerSecret,
   transitionWorkspace,
+  updateWorkspace,
 } from "@/lib/db/repositories";
+import { optionalEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { runtimeSessionEnvironment } from "@/lib/runtime/ensure-runtime-computer";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
-import { mintSnapshotUpload } from "@/lib/runtime/storage";
+import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
+import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
-type LifecycleAction = "resume" | "suspend" | "destroy" | "archive";
+type LifecycleAction = "resume" | "suspend" | "destroy" | "archive" | "restore";
 
 function actionFor(body: unknown): LifecycleAction | null {
   if (!body || typeof body !== "object" || !("action" in body)) return null;
@@ -27,7 +33,8 @@ function actionFor(body: unknown): LifecycleAction | null {
   return action === "resume" ||
     action === "suspend" ||
     action === "destroy" ||
-    action === "archive"
+    action === "archive" ||
+    action === "restore"
     ? action
     : null;
 }
@@ -96,7 +103,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
   if (!action) {
     return NextResponse.json(
-      { error: "Use resume, suspend, destroy, or archive." },
+      { error: "Use resume, suspend, destroy, archive, or restore." },
       { status: 400 },
     );
   }
@@ -115,11 +122,11 @@ export async function POST(request: Request, context: RouteContext) {
     return daytonaLifecycle(action, workspace, provider, owner.id);
   }
 
-  // Archive produces a Snapshot from the runtime-agent's live session; only the
-  // Daytona-backed Runtime provides one. Legacy providers can't archive.
-  if (action === "archive") {
+  // Archive/restore operate on the runtime-agent's Session + Snapshot; only the
+  // Daytona-backed Runtime provides them. Legacy providers can't.
+  if (action === "archive" || action === "restore") {
     return NextResponse.json(
-      { error: "Archiving is only supported on Runtime workspaces." },
+      { error: "Archive and restore are only supported on Runtime workspaces." },
       { status: 409 },
     );
   }
@@ -137,6 +144,7 @@ async function daytonaLifecycle(
   if (action === "resume") return resumeDaytonaWorkspace(workspace, provider, userId);
   if (action === "suspend") return suspendDaytonaWorkspace(workspace, provider, userId);
   if (action === "archive") return archiveDaytonaWorkspace(workspace, provider, userId);
+  if (action === "restore") return restoreDaytonaWorkspace(workspace, provider, userId);
   return destroyDaytonaWorkspace(workspace, provider, userId);
 }
 
@@ -197,6 +205,112 @@ async function archiveDaytonaWorkspace(
   return completed
     ? NextResponse.json({ workspace: { id: workspace.id, status: "archived" } })
     : lifecycleReconciliationRequired("archive");
+}
+
+/**
+ * Restore → revive an archived Session from its Snapshot. Ensures a Runtime
+ * Computer for the project (provisioning one if none — NOT necessarily the
+ * original box), mints signed download URLs for the tree + conversation, and
+ * has the agent rebuild + VERIFY the worktree before relaunching Claude with
+ * `--continue`. A verification failure surfaces as an error and leaves the
+ * workspace archived rather than half-restored.
+ */
+async function restoreDaytonaWorkspace(
+  workspace: Workspace,
+  provider: DaytonaRuntimeProvider,
+  userId: string,
+) {
+  if (workspace.status !== "archived") {
+    return NextResponse.json(
+      { error: "Only an archived workspace can be restored." },
+      { status: 409 },
+    );
+  }
+  const snapshot = (await listWorkspaceSnapshots(workspace.id))[0];
+  if (!snapshot) {
+    return NextResponse.json(
+      { error: "This workspace has no Snapshot to restore." },
+      { status: 409 },
+    );
+  }
+  const transitioned = await startTransition(workspace, ["archived"], "restoring");
+  if (!transitioned) return lifecycleConflict();
+
+  try {
+    const project = await getProject(workspace.projectId);
+    if (!project) throw new Error("Project not found for restore.");
+    const githubToken = optionalEnv("GITHUB_PAT");
+
+    // Manifest pointers -> signed download URLs for exactly what the agent needs.
+    const storage = supabaseSnapshotStorage();
+    const { manifest, storagePath } = snapshot;
+    const downloads = await Promise.all(
+      [
+        { artifact: "bundle", file: manifest.tree.bundle },
+        { artifact: "patch", file: manifest.tree.patch },
+        { artifact: "conversation", file: manifest.conversation },
+      ].map(async ({ artifact, file }) => ({
+        artifact,
+        url: await mintSnapshotDownloadUrl(storage, `${storagePath}${file}`, userId),
+      })),
+    );
+
+    // Ensure a box (any) and refresh its mirror before the agent branches from
+    // the bundle. Matches the create flow's lazy-provision path.
+    const ensured = await ensureProjectRuntimeComputer(provider, {
+      projectId: project.id,
+      repoFullName: project.fullName,
+      githubToken,
+      sessionEnv: runtimeSessionEnvironment(),
+    });
+    const computer = ensured.computer;
+    if (!computer.daytonaSandboxId) {
+      throw new Error("Ready Runtime Computer has no Daytona sandbox id.");
+    }
+    if (!ensured.provisioned) {
+      await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
+    }
+
+    const target = await provider.agentTarget(
+      computer.daytonaSandboxId,
+      ensured.agentSecret,
+    );
+    const identity: WorkspaceIdentity = {
+      workspaceId: workspace.id,
+      projectId: project.id,
+      computerId: computer.id,
+      userId,
+    };
+    await new AgentClient(target).restoreWorkspace(identity, {
+      branch: workspace.branch,
+      baseBranch: project.defaultBranch,
+      sessionId: manifest.sessionId,
+      downloads,
+    });
+
+    // Persist the (possibly new) box + session linkage now that the agent has
+    // rebuilt and verified the worktree.
+    await updateWorkspace(workspace.id, {
+      computerId: computer.id,
+      tmuxSession: `ws-${workspace.id}`,
+      agentWorkspaceId: workspace.id,
+    });
+  } catch (error) {
+    console.error(`Workspace ${workspace.id} restore failed`, error);
+    await restoreAfterFailure(workspace, "restoring", lifecycleError("restore")).catch(
+      (updateError: unknown) => console.error("Could not persist restore failure", updateError),
+    );
+    return NextResponse.json({ error: lifecycleError("restore") }, { status: 502 });
+  }
+
+  const completed = await completeTransition({
+    id: workspace.id,
+    from: "restoring",
+    patch: { status: "ready", errorMessage: null, touchActive: true },
+  });
+  return completed
+    ? NextResponse.json({ workspace: { id: workspace.id, status: "ready" } })
+    : lifecycleReconciliationRequired("restore");
 }
 
 async function daytonaAgent(

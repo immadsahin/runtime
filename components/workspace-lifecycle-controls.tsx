@@ -1,6 +1,14 @@
 "use client";
 
-import { Archive, History, LoaderCircle, Pause, Play, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  History,
+  LoaderCircle,
+  Pause,
+  Play,
+  Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -8,13 +16,14 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import type { WorkspaceStatus } from "@/lib/runtime/types";
 
-type LifecycleAction = "resume" | "suspend" | "destroy" | "archive";
+type LifecycleAction = "resume" | "suspend" | "destroy" | "archive" | "restore";
 
 const actionLabels: Record<LifecycleAction, string> = {
   resume: "Resume workspace",
   suspend: "Suspend workspace",
   destroy: "Destroy workspace",
   archive: "Archive workspace",
+  restore: "Restore workspace",
 };
 
 export function WorkspaceLifecycleControls({
@@ -98,6 +107,12 @@ export function WorkspaceLifecycleControls({
           </Button>
         )}
         {isArchived && (
+          <Button disabled={isPending} onClick={() => perform("restore")} size="sm">
+            {waiting("restore") ? <LoaderCircle className="animate-spin" /> : <ArchiveRestore />}
+            {waiting("restore") ? "Restoring" : "Restore"}
+          </Button>
+        )}
+        {isArchived && (
           <Button asChild size="sm" variant="outline">
             <Link href={`/workspaces/${workspaceId}/replay`}>
               <History /> Replay
@@ -118,7 +133,7 @@ export function WorkspaceLifecycleControls({
       )}
       <p className="text-muted-foreground text-xs">
         {isArchived
-          ? "This workspace is archived. Replay reads its Snapshot from storage — no Runtime Computer required."
+          ? "Archived. Replay reads the Snapshot from storage (no box); Restore rebuilds a live session from it on a fresh Runtime Computer."
           : canResume
             ? "Resuming starts fresh compute attached to this workspace’s persistent storage."
             : "Archiving captures a durable Snapshot (terminal, conversation, and git tree); suspending just stops compute."}
