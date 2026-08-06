@@ -65,10 +65,12 @@ Phased execution (Option A — transport-first):
     browser session remain required for full acceptance evidence.
 - ⬜ Phase 7 — Dogfood: an uninterrupted work session in Runtime without opening Conductor
 
-## Milestone 4 — Archive / Replay / Restore — 🟡 IN PROGRESS
+## Milestone 4 — Archive / Replay / Restore — 🟡 IMPLEMENTATION COMPLETE (real-box acceptance pending)
 Foundations landed (cast recorder, storage plumbing, snapshot schema + table).
 Flows built as vertical slices on top: Slice 1 (Archive) → Slice 2 (Replay) →
-Slice 3 (Restore). See [`m4-plan.md`](./m4-plan.md), [`m4-foundations-handoff.md`](./m4-foundations-handoff.md).
+Slice 3 (Restore) — all landed and unit/integration-green. What remains is the
+`m4-plan.md` acceptance run on a real Daytona box (no `DAYTONA_API_KEY` here,
+same gate as M3 Phase 6). See [`m4-plan.md`](./m4-plan.md), [`m4-foundations-handoff.md`](./m4-foundations-handoff.md).
 - ✅ Foundations — PTY cast recorder (asciinema v2), Supabase Storage signed-URL
   helpers, manifest zod schema + `workspace_snapshots` table (+ bucket).
 - ✅ **Slice 1 — Archive → Snapshot (produce).** State machine
@@ -91,14 +93,27 @@ Slice 3 (Restore). See [`m4-plan.md`](./m4-plan.md), [`m4-foundations-handoff.md
   Summary diff; Archive + Replay entry points added to the lifecycle controls
   (archived workspaces are now destroyable, cascading the Snapshot rows).
   Verified: `pnpm check` + `go test ./...` green; visual acceptance deferred.
-- ⬜ Slice 3 — Restore (`restoring`): ensure box → materialize tree (bundle + patch,
-  incl. untracked-file capture) → verify → `claude --continue` → `ready`; reclaim
-  worktree/tmux on archive.
-- Follow-ups: capture untracked files in the patch (Slice 3 needs exact WIP);
-  reclaim `casts/<id>` + worktree on archive/destroy; delete Snapshot storage
-  objects when an archived workspace is destroyed (FK cascade removes the rows,
-  not the bytes); verify the exact Supabase signed-upload wire format on a real
-  box; render committed diff in Replay (needs the git bundle).
+- ✅ **Slice 3 — Restore.** `archived → restoring → ready`. The agent
+  `snapshot.Materialize` downloads the tree + conversation via signed URLs,
+  imports the bundle into the mirror, checks the branch out as a worktree,
+  applies the (now untracked-inclusive) patch, places the JSONL where
+  `claude --continue` finds the exact session, and **verifies before booting
+  Claude** (branch imported ✓, worktree HEAD ✓, patch applied ✓, sessionId ✓) —
+  a failure aborts without launching Claude. Idempotent (re-restore rebuilds).
+  Archive now captures untracked text files (`git add -N`) so Restore rebuilds
+  exact WIP. Next `restore` lifecycle action ensures a box via
+  `ensureRuntimeComputer` (any box, not the original — portability), mints
+  download URLs, drives the agent, and persists the new linkage. Restore button
+  added to the lifecycle controls. Verified: `pnpm check` + `go test ./...`
+  green (Materialize tested end-to-end against a real bundle/mirror: happy path,
+  idempotency, missing-URL, and patch-conflict-aborts). Real-box acceptance
+  (the plan's portability/idempotency run on Daytona) deferred.
+- Follow-ups (real-box-gated): reclaim `casts/<id>` + worktree on archive
+  (kept in place for now so unverified restore can't strand WIP); delete
+  Snapshot storage objects on destroy (FK cascade drops the rows, not the
+  bytes); capture untracked *binary* files (text-only today); verify the exact
+  Supabase signed upload/download wire format on a real box; render the
+  committed diff in Replay (needs the git bundle).
 
 ---
 
