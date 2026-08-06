@@ -15,40 +15,30 @@
  */
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
 
-/** The content-block keys the protocol carries (mirrors protocol.ContentBlock). */
-const BLOCK_KEYS = [
-  "type",
-  "text",
-  "id",
-  "name",
-  "input",
-  "toolUseId",
-  "content",
-] as const;
+/** String content-block fields the Go struct marshals with `omitempty`. */
+const STRING_KEYS = ["text", "id", "name", "toolUseId"] as const;
+/** Raw-JSON content-block fields (json.RawMessage on the Go side). */
+const RAW_KEYS = ["input", "content"] as const;
 
-type RawRecord = {
-  type?: string;
-  uuid?: string;
-  parentUuid?: string | null;
-  timestamp?: string;
-  message?: { role?: string; content?: unknown[] } | null;
-};
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
 
 /**
- * Project a raw content block onto just the protocol keys, matching the Go
- * struct's `omitempty` marshaling (empty strings / absent values are dropped),
- * so the off-box parse reproduces the exact events the agent would have emitted.
+ * Project a raw content block onto the protocol keys, reproducing the Go struct's
+ * marshaling exactly so replay is byte-equivalent to the live decoder:
+ *  - string fields (text/id/name/toolUseId) are `omitempty` — dropped when empty;
+ *  - `input`/`content` are json.RawMessage — kept whenever the key is PRESENT
+ *    (including an explicit `null` or empty string), dropped only when absent.
  */
-function cleanBlock(raw: unknown): ContentBlock {
+function cleanBlock(raw: Record<string, unknown>): ContentBlock {
   const out: Record<string, unknown> = {};
-  if (raw && typeof raw === "object") {
-    const src = raw as Record<string, unknown>;
-    for (const key of BLOCK_KEYS) {
-      const value = src[key];
-      if (value !== undefined && value !== null && value !== "") {
-        out[key] = value;
-      }
-    }
+  if (typeof raw.type === "string") out.type = raw.type;
+  for (const key of STRING_KEYS) {
+    if (typeof raw[key] === "string" && raw[key] !== "") out[key] = raw[key];
+  }
+  for (const key of RAW_KEYS) {
+    if (key in raw) out[key] = raw[key];
   }
   return out as ContentBlock;
 }
@@ -56,7 +46,8 @@ function cleanBlock(raw: unknown): ContentBlock {
 /**
  * Parse the whole conversation JSONL into ordered message events. Lines are kept
  * in file order (the Timeline's source of truth); non-message records and
- * malformed lines are skipped.
+ * malformed lines are skipped. Every field is runtime-checked as `unknown` — a
+ * single malformed record must never throw and fail the whole Replay.
  */
 export function parseConversation(jsonl: string): AgentEvent[] {
   const events: AgentEvent[] = [];
@@ -69,20 +60,31 @@ export function parseConversation(jsonl: string): AgentEvent[] {
 
 function decodeLine(line: string): AgentEvent | null {
   if (line.trim() === "") return null;
-  let rec: RawRecord;
+  let rec: unknown;
   try {
-    rec = JSON.parse(line) as RawRecord;
+    rec = JSON.parse(line);
   } catch {
     return null; // tolerate unparseable lines
   }
-  if (rec.type !== "user" && rec.type !== "assistant") return null;
-  if (!rec.message) return null;
+  if (!isObject(rec)) return null;
+  if (rec.type !== "user" && rec.type !== "assistant") return null; // whitelist
+  const message = rec.message;
+  if (!isObject(message)) return null;
+
+  // Go decodes message.content into []ContentBlock; a non-array or a non-object
+  // element fails that decode and the whole record is skipped — mirror it rather
+  // than mapping over a non-array (which would throw).
+  const rawContent = message.content;
+  if (!Array.isArray(rawContent) || !rawContent.every(isObject)) return null;
+
   return {
     t: "message",
-    uuid: rec.uuid ?? "",
-    parentUuid: rec.parentUuid ?? null,
-    role: rec.message.role === "user" ? "user" : "assistant",
-    timestamp: rec.timestamp ?? "",
-    content: (rec.message.content ?? []).map(cleanBlock),
+    uuid: typeof rec.uuid === "string" ? rec.uuid : "",
+    parentUuid: typeof rec.parentUuid === "string" ? rec.parentUuid : null,
+    // Pass the role through as the agent does — never silently relabel an
+    // unexpected role as "assistant".
+    role: (typeof message.role === "string" ? message.role : "") as "user" | "assistant",
+    timestamp: typeof rec.timestamp === "string" ? rec.timestamp : "",
+    content: rawContent.map(cleanBlock),
   };
 }

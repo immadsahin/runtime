@@ -8,7 +8,9 @@
     "not valid json",
     "{\"type\":\"assistant\",\"uuid\":\"u4\",\"timestamp\":\"t4\",\"message\":null}",
     "   ",
-    "{\"type\":\"assistant\",\"uuid\":\"u5\",\"parentUuid\":\"u3\",\"timestamp\":\"t5\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"bye\"}]}}"
+    "{\"type\":\"assistant\",\"uuid\":\"u5\",\"parentUuid\":\"u3\",\"timestamp\":\"t5\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"bye\"}]}}",
+    "{\"type\":\"assistant\",\"uuid\":\"u6\",\"parentUuid\":\"u5\",\"timestamp\":\"t6\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tu2\",\"name\":\"Read\",\"input\":null},{\"type\":\"tool_result\",\"toolUseId\":\"tr2\",\"content\":null}]}}",
+    "{\"type\":\"assistant\",\"uuid\":\"u7\",\"timestamp\":\"t7\",\"message\":{\"role\":\"assistant\",\"content\":\"oops\"}}"
   ],
   "events": [
     {
@@ -17,7 +19,12 @@
       "parentUuid": null,
       "role": "assistant",
       "timestamp": "t1",
-      "content": [{ "type": "text", "text": "hi" }]
+      "content": [
+        {
+          "type": "text",
+          "text": "hi"
+        }
+      ]
     },
     {
       "t": "message",
@@ -25,7 +32,13 @@
       "parentUuid": "u1",
       "role": "user",
       "timestamp": "t2",
-      "content": [{ "type": "tool_result", "toolUseId": "tr1", "content": "done" }]
+      "content": [
+        {
+          "type": "tool_result",
+          "toolUseId": "tr1",
+          "content": "done"
+        }
+      ]
     },
     {
       "t": "message",
@@ -34,8 +47,17 @@
       "role": "assistant",
       "timestamp": "t3",
       "content": [
-        { "type": "thinking" },
-        { "type": "tool_use", "id": "tu1", "name": "Bash", "input": { "cmd": "ls" } }
+        {
+          "type": "thinking"
+        },
+        {
+          "type": "tool_use",
+          "id": "tu1",
+          "name": "Bash",
+          "input": {
+            "cmd": "ls"
+          }
+        }
       ]
     },
     {
@@ -44,7 +66,32 @@
       "parentUuid": "u3",
       "role": "assistant",
       "timestamp": "t5",
-      "content": [{ "type": "text", "text": "bye" }]
+      "content": [
+        {
+          "type": "text",
+          "text": "bye"
+        }
+      ]
+    },
+    {
+      "t": "message",
+      "uuid": "u6",
+      "parentUuid": "u5",
+      "role": "assistant",
+      "timestamp": "t6",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "tu2",
+          "name": "Read",
+          "input": null
+        },
+        {
+          "type": "tool_result",
+          "toolUseId": "tr2",
+          "content": null
+        }
+      ]
     }
   ]
 }

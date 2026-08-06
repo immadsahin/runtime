@@ -45,3 +45,17 @@ test("parseCast falls back to defaults for an empty or headerless cast", () => {
   const { frames } = parseCast('{"version":2,"width":80,"height":24}\n[-1,"o","x"]');
   assert.deepEqual(frames, [{ time: 0, data: "x" }]);
 });
+
+test("parseCast rejects non-finite frame times (1e999 -> Infinity)", () => {
+  const { frames } = parseCast(
+    '{"version":2,"width":80,"height":24}\n[1e999,"o","x"]\n[0.5,"o","y"]',
+  );
+  assert.deepEqual(frames, [{ time: 0.5, data: "y" }]);
+});
+
+test("parseCast returns an independent header per call (no shared mutation)", () => {
+  const a = parseCast("");
+  a.header.width = 999;
+  const b = parseCast("");
+  assert.equal(b.header.width, 80);
+});

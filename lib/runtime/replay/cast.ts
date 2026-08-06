@@ -29,7 +29,8 @@ const DEFAULT_HEADER: CastHeader = { version: 2, width: 80, height: 24 };
 
 export function parseCast(text: string): Cast {
   const lines = text.split("\n");
-  let header: CastHeader = DEFAULT_HEADER;
+  // Clone so a caller mutating one payload's header can't affect another parse.
+  let header: CastHeader = { ...DEFAULT_HEADER };
   const frames: CastFrame[] = [];
   let headerParsed = false;
 
@@ -64,6 +65,9 @@ export function parseCast(text: string): Cast {
       Array.isArray(parsed) &&
       parsed.length >= 3 &&
       typeof parsed[0] === "number" &&
+      // Reject NaN/Infinity (e.g. a JSON `1e999`) — a non-finite frame time would
+      // make playback scheduling hang on an unreachable timestamp.
+      Number.isFinite(parsed[0]) &&
       parsed[1] === "o" &&
       typeof parsed[2] === "string"
     ) {

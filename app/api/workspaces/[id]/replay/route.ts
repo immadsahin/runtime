@@ -28,13 +28,18 @@ export async function GET(request: Request, context: RouteContext) {
 
   const { id } = await context.params;
   const workspace = await getWorkspace(id);
-  if (!workspace) {
+  if (!workspace || workspace.status === "destroyed") {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
 
   const snapshotId = new URL(request.url).searchParams.get("snapshotId");
   let snapshot: WorkspaceSnapshot | null;
   if (snapshotId) {
+    // Guard the id before it hits the uuid-typed column, so arbitrary query
+    // input yields a clean 404 rather than a Postgres 500.
+    if (!isUuid(snapshotId)) {
+      return NextResponse.json({ error: "No Snapshot found for this workspace." }, { status: 404 });
+    }
     snapshot = await getWorkspaceSnapshot(snapshotId);
     if (snapshot && snapshot.workspaceId !== workspace.id) snapshot = null;
   } else {
@@ -49,7 +54,7 @@ export async function GET(request: Request, context: RouteContext) {
       snapshot,
       ownerId: owner.id,
       storage: supabaseSnapshotStorage(),
-      fetchText,
+      fetchBytes,
     });
     return NextResponse.json({ snapshotId: snapshot.id, ...payload });
   } catch (error) {
@@ -61,10 +66,15 @@ export async function GET(request: Request, context: RouteContext) {
   }
 }
 
-async function fetchText(url: string): Promise<string> {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
+async function fetchBytes(url: string): Promise<Uint8Array> {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`fetch artifact failed (${response.status})`);
   }
-  return response.text();
+  return new Uint8Array(await response.arrayBuffer());
 }
