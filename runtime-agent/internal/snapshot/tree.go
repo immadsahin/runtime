@@ -19,20 +19,29 @@ func buildBundle(ctx context.Context, worktree, dst string) (string, error) {
 	return dst, nil
 }
 
-// buildPatch writes a patch of the tracked working-tree changes (staged and
-// unstaged) relative to HEAD. An empty patch (no WIP) is valid and expected.
+// buildPatch writes a patch of the working-tree changes relative to HEAD so
+// Restore can reconstruct exact WIP. Untracked (non-ignored) files are staged as
+// intent-to-add first, so `git diff HEAD` emits them as new-file diffs and they
+// round-trip through Restore's `git apply` — otherwise a restored worktree would
+// silently drop any new-but-uncommitted file. The intent-to-add markers are then
+// cleared so the index is left as we found it. An empty patch (no WIP) is valid.
 //
-// v0 limitation: untracked files are NOT captured (`git diff HEAD` omits them).
-// Restore therefore reconstructs committed history + tracked WIP; capturing
-// untracked files is deferred with the rest of Restore (a later slice).
+// v0 limitation: binary untracked files can't round-trip through a text patch;
+// they are not captured. `.gitignore`d files are excluded by design.
 func buildPatch(ctx context.Context, worktree, dst string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", worktree, "diff", "HEAD")
-	out, err := cmd.Output()
+	// Best-effort: a failure here just means untracked files aren't captured.
+	_ = exec.CommandContext(ctx, "git", "-C", worktree, "add", "-N", ".").Run()
+
+	out, err := exec.CommandContext(ctx, "git", "-C", worktree, "diff", "HEAD").Output()
 	if err != nil {
 		// A broken repo is the only real failure here; degrade to an empty patch
 		// rather than aborting the whole archive over WIP capture.
 		out = nil
 	}
+
+	// Undo intent-to-add so the archived worktree's index is unchanged.
+	_ = exec.CommandContext(ctx, "git", "-C", worktree, "reset", "-q").Run()
+
 	if err := os.WriteFile(dst, out, 0o644); err != nil {
 		return "", fmt.Errorf("write patch: %w", err)
 	}

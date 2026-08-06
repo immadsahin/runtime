@@ -78,6 +78,11 @@ func gitRepoWithWIP(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("hello world\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Untracked file → must ALSO be captured (intent-to-add), so Restore can
+	// reconstruct exact WIP, not just tracked changes.
+	if err := os.WriteFile(filepath.Join(dir, "brand-new.txt"), []byte("fresh content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -188,8 +193,12 @@ func TestProduceUploadsAllArtifactsManifestLast(t *testing.T) {
 	if !strings.HasPrefix(string(srv.received["bundle"]), "# v2 git bundle") {
 		t.Fatalf("bundle is not a git bundle: %.20q", srv.received["bundle"])
 	}
-	if !strings.Contains(string(srv.received["patch"]), "world") {
-		t.Fatalf("patch missing WIP change: %s", srv.received["patch"])
+	patch := string(srv.received["patch"])
+	if !strings.Contains(patch, "world") {
+		t.Fatalf("patch missing tracked WIP change: %s", patch)
+	}
+	if !strings.Contains(patch, "fresh content") || !strings.Contains(patch, "brand-new.txt") {
+		t.Fatalf("patch missing untracked file capture: %s", patch)
 	}
 }
 
