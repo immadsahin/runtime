@@ -22,3 +22,19 @@ export async function isAutoPausedComputeWorkspace(
   if (provider.topology !== "isolated" || !computer.providerComputerId) return false;
   return (await provider.computerState(computer.providerComputerId)) === "paused";
 }
+
+/**
+ * An archived isolated workspace retains its immutable placement, but it must
+ * not continue consuming running compute after its Snapshot is durable. The
+ * corresponding Restore action reconnects this exact provider handle.
+ */
+export async function pauseArchivedIsolatedComputer(
+  computer: Pick<RuntimeComputer, "providerComputerId">,
+  provider: Pick<ComputeProvider, "topology" | "pauseComputer">,
+): Promise<void> {
+  if (provider.topology !== "isolated") return;
+  if (!computer.providerComputerId) {
+    throw new Error("Isolated Runtime Computer has no provider computer id.");
+  }
+  await provider.pauseComputer(computer.providerComputerId);
+}

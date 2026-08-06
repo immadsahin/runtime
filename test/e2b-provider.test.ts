@@ -191,8 +191,13 @@ test("E2B treats paused computers as resumable placements and delegates lifecycl
 
     const unavailableController = fakeClient(calls(), sandbox());
     unavailableController.getInfo = async () => { throw new Error("controller unavailable"); };
+    const unavailableProvider = new E2BRuntimeProvider(unavailableController);
     await assert.rejects(
-      new E2BRuntimeProvider(unavailableController).destroyComputer("e2b-1"),
+      unavailableProvider.computerAlive("e2b-1"),
+      /controller unavailable/,
+    );
+    await assert.rejects(
+      unavailableProvider.destroyComputer("e2b-1"),
       /controller unavailable/,
     );
 

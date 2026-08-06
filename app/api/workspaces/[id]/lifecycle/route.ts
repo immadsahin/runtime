@@ -18,7 +18,10 @@ import { optionalEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { runtimeSessionEnvironment } from "@/lib/runtime/ensure-runtime-computer";
-import { isAutoPausedComputeWorkspace } from "@/lib/runtime/compute-lifecycle";
+import {
+  isAutoPausedComputeWorkspace,
+  pauseArchivedIsolatedComputer,
+} from "@/lib/runtime/compute-lifecycle";
 import {
   type ComputeRuntimeProvider,
   isComputeRuntimeProvider,
@@ -197,6 +200,14 @@ async function archiveComputeWorkspace(
       storagePath: prefix,
       manifest,
     });
+
+    // Archive preserves the exact E2B placement for Restore, but the durable
+    // Snapshot means that isolated compute can stop billing immediately.
+    // Keep the workspace active if pausing fails so this action is retryable
+    // rather than claiming an archive released a still-running sandbox.
+    const computer = await computerForWorkspace(workspace);
+    if (!computer) throw new Error("Runtime Computer is not available for archive.");
+    await pauseArchivedIsolatedComputer(computer, provider);
   } catch (error) {
     console.error(`Workspace ${workspace.id} archive failed`, error);
     await restoreAfterFailure(workspace, "archiving", lifecycleError("archive")).catch(

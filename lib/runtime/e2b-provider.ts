@@ -257,8 +257,12 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
       if (state === "running" || state === "paused") return state;
       return "missing";
     } catch (error) {
-      console.error(`Could not read E2B computer ${computerId}`, error);
-      return "missing";
+      // Only a confirmed absence can release a persisted placement for a new
+      // provision. Treating an E2B controller outage as "missing" would mark
+      // the row stopped and could create a second billed sandbox while the
+      // original remains live.
+      if (isNotFoundError(error)) return "missing";
+      throw error;
     }
   }
 
@@ -270,9 +274,9 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
 
   /**
    * Terminal cleanup must distinguish an already-removed sandbox from an E2B
-   * API outage. `computerState` intentionally turns lookup errors into
-   * `missing` for non-terminal liveness checks, so destroy uses this strict
-   * lookup instead of ever treating an unavailable controller as success.
+   * API outage. `computerState` also preserves controller errors, but destroy
+   * keeps its own strict lookup so an absent sandbox remains an idempotent
+   * terminal-cleanup success.
    */
   private async computerExistsForDestroy(computerId: string): Promise<boolean> {
     try {
