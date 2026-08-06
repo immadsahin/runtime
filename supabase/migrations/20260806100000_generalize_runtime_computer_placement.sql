@@ -122,11 +122,14 @@ begin
     end if;
     runtime_computer_id := existing.id;
     if existing.status in ('error', 'stopped') then
-      -- A failed post-provision persistence can retain a provider handle only
-      -- when terminal cleanup was not confirmed. Do not clear that handle and
-      -- create a replacement: the original isolated computer could still be
-      -- live and billed. An operator must resolve the recorded handle first.
-      if existing.provider_computer_id is not null then
+      -- Only an ISOLATED placement (one billed sandbox per workspace) must block
+      -- automatic reprovisioning on a retained handle: the original sandbox could
+      -- still be live and billed, so an operator must resolve it first. A SHARED
+      -- Daytona box is reprovisioned in place — markRuntimeComputerStoppedIfReady
+      -- deliberately keeps the handle after a dead box is detected, and recovery
+      -- clears it and provisions afresh; blocking that would permanently wedge
+      -- the project's only compute.
+      if existing.topology = 'isolated' and existing.provider_computer_id is not null then
         raise exception 'Runtime Computer cleanup is incomplete';
       end if;
       update runtime_computers set status = 'provisioning', agent_secret = requested_agent_secret,

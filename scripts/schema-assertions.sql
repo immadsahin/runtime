@@ -180,6 +180,8 @@ declare
   daytona_id uuid;
   e2b_id uuid;
   should_create boolean;
+  reclaimed_id uuid;
+  reclaimed_should boolean;
 begin
   select id into claimed_project_id from projects
     where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
@@ -264,6 +266,27 @@ begin
   exception when raise_exception then
     if sqlerrm <> 'Runtime Computer cleanup is incomplete' then raise; end if;
   end;
+
+  -- A SHARED Daytona box is reprovisioned in place. markRuntimeComputerStoppedIfReady
+  -- marks a dead box 'stopped' while deliberately RETAINING its provider handle,
+  -- so a re-claim must reset the handle and provision again — never raise
+  -- "cleanup is incomplete", which only guards billed isolated sandboxes. Without
+  -- this the project's only compute would be permanently wedged.
+  update runtime_computers
+  set status = 'stopped', provider_computer_id = 'stale-daytona-handle'
+  where id = daytona_id;
+  select runtime_computer_id, should_provision into reclaimed_id, reclaimed_should
+  from claim_runtime_computer(
+    claimed_project_id, 'project:' || claimed_project_id::text, 'daytona', 'shared', 'secret-6', 'runtime-computer-v1'
+  );
+  if reclaimed_id <> daytona_id or not reclaimed_should then
+    raise exception 'FAIL: stopped Daytona placement was not reprovisioned in place';
+  end if;
+  if exists (
+    select 1 from runtime_computers where id = daytona_id and provider_computer_id is not null
+  ) then
+    raise exception 'FAIL: reprovisioned Daytona placement retained a stale handle';
+  end if;
 
   -- Deleting a Runtime Computer must retain its workspace's required owner and
   -- project identity while clearing only the optional computer reference.
