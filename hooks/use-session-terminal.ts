@@ -2,9 +2,16 @@
 
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 
-import { openTerminal } from "@/lib/runtime/session-client";
+import { openTerminal, type TerminalAttachment } from "@/lib/runtime/session-client";
 
 import type { SessionAttachment } from "./use-session-attachment";
 
@@ -21,6 +28,10 @@ export type SessionTerminalState = {
   exitCode: number | null;
   /** Force a full URL re-fetch + reattach (test knob for the 5-min TTL flow). */
   refresh: () => void;
+  /** Write raw input to the PTY (e.g. a composer prompt). No-op unless this
+   *  connection holds the keyboard and the socket is open. Returns whether the
+   *  frame was sent. */
+  sendInput: (data: string) => boolean;
 };
 
 type WsPhase = "idle" | "open" | "closed";
@@ -46,6 +57,7 @@ export function useSessionTerminal(
   } = attachment;
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const handleRef = useRef<TerminalAttachment | null>(null);
   const [role, setRole] = useState<SessionTerminalState["role"]>("unknown");
   const [wsError, setWsError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
@@ -120,11 +132,13 @@ export function useSessionTerminal(
       },
       onError: (err) => setWsError(err.message),
     });
+    handleRef.current = handle;
     setWsPhase("open");
 
     return () => {
       active = false;
       handle.dispose();
+      handleRef.current = null;
     };
     // attachId changes on every successful refresh -> reattach.
   }, [attachId, attachmentStatus, reconnect, urls?.ptyUrl]);
@@ -148,5 +162,10 @@ export function useSessionTerminal(
 
   const error = wsError ?? attachmentError;
 
-  return { status, role, error, exitCode, refresh };
+  const sendInput = useCallback(
+    (data: string) => handleRef.current?.send({ t: "input", data }) ?? false,
+    [],
+  );
+
+  return { status, role, error, exitCode, refresh, sendInput };
 }
