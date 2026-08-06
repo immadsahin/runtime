@@ -169,13 +169,28 @@ export function useCastPlayer(
       duration,
       anchorCastRef.current + (Date.now() - anchorWallRef.current) / 1000,
     );
+    // Catch the terminal up to the displayed playhead: a delayed frame timer can
+    // leave rendered output behind `elapsed`, so advance through it before
+    // freezing, keeping the terminal and the scrubber consistent.
+    const term = termRef.current;
+    const frames = cast?.frames ?? [];
+    if (term) {
+      let i = frameIndexRef.current;
+      while (i < frames.length && frames[i].time <= elapsed) {
+        term.write(frames[i].data);
+        i += 1;
+      }
+      frameIndexRef.current = i;
+    }
     setTime(elapsed);
     setStatus((s) => (s === "playing" ? "paused" : s));
-  }, [clearTimer, duration, setTime]);
+  }, [clearTimer, duration, cast, setTime]);
 
   const seek = useCallback(
     (t: number) => {
-      if (!cast) return;
+      // An empty/malformed cast has nothing to seek — stay "empty" so the
+      // controls stay truthful (play is a no-op there too).
+      if (!cast || cast.frames.length === 0) return;
       const clamped = Math.max(0, Math.min(t, duration));
       clearTimer();
       renderUpTo(clamped);
