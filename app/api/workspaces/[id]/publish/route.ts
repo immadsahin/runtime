@@ -20,6 +20,8 @@ import {
   providerErrorResponse,
   resolveProvider,
 } from "@/lib/runtime/resolve";
+import { isAutoPausedComputeWorkspace } from "@/lib/runtime/compute-lifecycle";
+import { updateWorkspace } from "@/lib/db/repositories";
 
 export const dynamic = "force-dynamic";
 
@@ -122,6 +124,19 @@ export async function POST(request: Request, context: RouteContext) {
       ) {
         return NextResponse.json(
           { error: "The interactive worktree is not available yet." },
+          { status: 409 },
+        );
+      }
+      // E2B connects resume a timeout-paused sandbox. Publishing must not
+      // silently restart billed compute; persist the pause and require the
+      // user to choose the explicit Resume lifecycle action first.
+      if (await isAutoPausedComputeWorkspace(computer, provider)) {
+        await updateWorkspace(workspace.id, {
+          status: "suspended",
+          errorMessage: "Runtime Computer paused after inactivity. Resume the workspace to continue.",
+        });
+        return NextResponse.json(
+          { error: "Runtime Computer paused after inactivity. Resume the workspace before publishing." },
           { status: 409 },
         );
       }
