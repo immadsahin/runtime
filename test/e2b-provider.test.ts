@@ -183,6 +183,19 @@ test("E2B treats paused computers as resumable placements and delegates lifecycl
     assert.deepEqual(recorded.connected, ["e2b-1"]);
     assert.deepEqual(recorded.killed, ["e2b-1"]);
 
+    const alreadyRemoved = calls();
+    await new E2BRuntimeProvider(
+      fakeClient(alreadyRemoved, sandbox("e2b-removed"), "missing"),
+    ).destroyComputer("e2b-removed");
+    assert.deepEqual(alreadyRemoved.killed, []);
+
+    const unavailableController = fakeClient(calls(), sandbox());
+    unavailableController.getInfo = async () => { throw new Error("controller unavailable"); };
+    await assert.rejects(
+      new E2BRuntimeProvider(unavailableController).destroyComputer("e2b-1"),
+      /controller unavailable/,
+    );
+
     const killFailure = fakeClient(calls(), sandbox());
     killFailure.kill = async () => { throw new Error("E2B delete failed"); };
     await assert.rejects(

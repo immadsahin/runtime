@@ -46,6 +46,16 @@ const DEFAULT_TIMEOUT_MS = 60 * 60_000;
 
 type E2BCommandResult = { stdout: string; stderr: string; exitCode: number };
 
+function isNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const detail = error as { status?: unknown; statusCode?: unknown; code?: unknown; message?: unknown };
+  return detail.status === 404 ||
+    detail.statusCode === 404 ||
+    detail.code === 404 ||
+    detail.code === "NOT_FOUND" ||
+    (typeof detail.message === "string" && /sandbox.*not found|not found.*sandbox/i.test(detail.message));
+}
+
 /** The small SDK surface Runtime needs, injectable for provider contract tests. */
 export type E2BSandbox = {
   sandboxId: string;
@@ -258,6 +268,22 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
     return (await this.computerState(computerId)) !== "missing";
   }
 
+  /**
+   * Terminal cleanup must distinguish an already-removed sandbox from an E2B
+   * API outage. `computerState` intentionally turns lookup errors into
+   * `missing` for non-terminal liveness checks, so destroy uses this strict
+   * lookup instead of ever treating an unavailable controller as success.
+   */
+  private async computerExistsForDestroy(computerId: string): Promise<boolean> {
+    try {
+      const { state } = await this.client.getInfo(computerId, { apiKey: this.apiKey() });
+      return state === "running" || state === "paused";
+    } catch (error) {
+      if (isNotFoundError(error)) return false;
+      throw error;
+    }
+  }
+
   /** Pause preserves the isolated sandbox's memory and filesystem. */
   async pauseComputer(computerId: string): Promise<void> {
     if (computerId) await this.client.pause(computerId, { apiKey: this.apiKey() });
@@ -270,6 +296,10 @@ export class E2BRuntimeProvider implements RuntimeProvider, ComputeProvider {
 
   async destroyComputer(computerId: string): Promise<void> {
     if (!computerId) return;
+    // Terminal destroy is retryable. If an operator or a prior successful
+    // request already removed the sandbox, there is no billed resource left to
+    // clean up and the workspace may converge to its destroyed state.
+    if (!(await this.computerExistsForDestroy(computerId))) return;
     // Do not hide a provider deletion failure. Callers must keep the persisted
     // placement/workspace retryable rather than reporting an orphaned billed
     // sandbox as successfully destroyed.

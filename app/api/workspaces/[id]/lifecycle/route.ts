@@ -501,10 +501,27 @@ async function destroyComputeWorkspace(
 
   // Best-effort worktree teardown: destroy is terminal, and the shared box may
   // already be gone (e.g. destroying an ARCHIVED workspace whose Runtime Computer
-  // was reclaimed). A missing/failed agent must not block the durable cleanup.
+  // was reclaimed). A missing, paused, or failed agent must not block the
+  // durable cleanup. In particular, detecting an E2B timeout pause here must
+  // not overwrite the in-progress `destroying` state: destroy can kill a
+  // paused sandbox without reconnecting it.
   try {
-    const { agent, identity } = await computeAgent(workspace, provider, userId);
-    await agent.destroyWorkspace(identity);
+    const computer = await computerForWorkspace(workspace);
+    if (
+      computer?.providerComputerId &&
+      computer.status === "ready" &&
+      !(await isAutoPausedComputeWorkspace(computer, provider))
+    ) {
+      const secret = await readRuntimeComputerSecret(computer.id);
+      if (!secret) throw new Error("Runtime Computer secret is missing.");
+      const target = await provider.agentTarget(computer.providerComputerId, secret);
+      await new AgentClient(target).destroyWorkspace({
+        workspaceId: workspace.id,
+        projectId: workspace.projectId,
+        computerId: computer.id,
+        userId,
+      });
+    }
   } catch (error) {
     console.warn(`Workspace ${workspace.id} agent teardown skipped`, error);
   }

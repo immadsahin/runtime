@@ -175,34 +175,61 @@ set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
 
 do $$
 declare
-  project_id uuid;
+  claimed_project_id uuid;
   workspace_id uuid;
   daytona_id uuid;
   e2b_id uuid;
   should_create boolean;
 begin
-  select id into project_id from projects
+  select id into claimed_project_id from projects
     where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
   select id into workspace_id from workspaces
     where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
 
   select runtime_computer_id, should_provision into daytona_id, should_create
   from claim_runtime_computer(
-    project_id, 'project:' || project_id::text, 'daytona', 'shared', 'secret-1', 'runtime-computer-v1'
+    claimed_project_id, 'project:' || claimed_project_id::text, 'daytona', 'shared', 'secret-1', 'runtime-computer-v1'
   );
   if not should_create then raise exception 'FAIL: first Daytona placement was not claimable'; end if;
+
+  -- During a rolling deploy, an older revision writes only the legacy Daytona
+  -- handle while a newer revision reads provider_computer_id. The migration
+  -- must keep the two columns synchronized in both directions.
+  update runtime_computers
+  set daytona_sandbox_id = 'legacy-daytona-handle'
+  where id = daytona_id;
+  if not exists (
+    select 1 from runtime_computers
+    where id = daytona_id
+      and provider_computer_id = 'legacy-daytona-handle'
+      and daytona_sandbox_id = 'legacy-daytona-handle'
+  ) then
+    raise exception 'FAIL: legacy Daytona handle was not synchronized';
+  end if;
+
+  update runtime_computers
+  set provider_computer_id = 'provider-daytona-handle'
+  where id = daytona_id;
+  if not exists (
+    select 1 from runtime_computers
+    where id = daytona_id
+      and provider_computer_id = 'provider-daytona-handle'
+      and daytona_sandbox_id = 'provider-daytona-handle'
+  ) then
+    raise exception 'FAIL: provider Daytona handle was not synchronized';
+  end if;
 
   -- The historical three-argument RPC must resolve the same placement and use
   -- its existing immutable image_version rather than its legacy default.
   select runtime_computer_id, should_provision into e2b_id, should_create
-  from claim_runtime_computer(project_id, 'secret-2');
+  from claim_runtime_computer(claimed_project_id, 'secret-2');
   if e2b_id <> daytona_id or should_create then
     raise exception 'FAIL: legacy claim did not reuse the Daytona placement';
   end if;
 
   select runtime_computer_id, should_provision into e2b_id, should_create
   from claim_runtime_computer(
-    project_id, 'workspace:' || workspace_id::text, 'e2b', 'isolated', 'secret-3', 'e2b-v1'
+    claimed_project_id, 'workspace:' || workspace_id::text, 'e2b', 'isolated', 'secret-3', 'e2b-v1'
   );
   if not should_create or e2b_id = daytona_id then
     raise exception 'FAIL: isolated E2B placement was not independently claimable';
@@ -210,7 +237,7 @@ begin
 
   begin
     perform claim_runtime_computer(
-      project_id, 'project:' || project_id::text, 'daytona', 'shared', 'secret-4', 'different-v1'
+      claimed_project_id, 'project:' || claimed_project_id::text, 'daytona', 'shared', 'secret-4', 'different-v1'
     );
     raise exception 'FAIL: mutable Runtime Computer image_version was allowed';
   exception when raise_exception then
@@ -223,6 +250,20 @@ begin
   exception when raise_exception then
     if sqlerrm <> 'Runtime Computer placement is immutable' then raise; end if;
   end;
+
+  -- Deleting a Runtime Computer must retain its workspace's required owner and
+  -- project identity while clearing only the optional computer reference.
+  update workspaces set computer_id = e2b_id where id = workspace_id;
+  delete from runtime_computers where id = e2b_id;
+  if not exists (
+    select 1 from workspaces w
+    where w.id = workspace_id
+      and w.owner_id = '11111111-1111-1111-1111-111111111111'
+      and w.project_id = claimed_project_id
+      and w.computer_id is null
+  ) then
+    raise exception 'FAIL: deleting a Runtime Computer did not retain its workspace';
+  end if;
 
   raise notice 'ok: Runtime Computer placement identity is immutable';
 end $$;

@@ -32,7 +32,37 @@ alter table workspaces
   add constraint workspaces_computer_fkey
     foreign key (owner_id, project_id, computer_id)
     references runtime_computers (owner_id, project_id, id)
-    on delete set null;
+    on delete set null (computer_id);
+
+-- Keep Daytona handles readable and writable during a rolling application
+-- deploy. Older revisions use `daytona_sandbox_id`; new revisions use the
+-- provider-neutral column. E2B never uses the legacy Daytona column.
+create function runtime_computer_sync_legacy_daytona_handle()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if new.compute_provider <> 'daytona' then
+    return new;
+  end if;
+
+  if tg_op = 'INSERT' then
+    new.provider_computer_id := coalesce(new.provider_computer_id, new.daytona_sandbox_id);
+    new.daytona_sandbox_id := coalesce(new.daytona_sandbox_id, new.provider_computer_id);
+  elsif new.provider_computer_id is distinct from old.provider_computer_id then
+    new.daytona_sandbox_id := new.provider_computer_id;
+  elsif new.daytona_sandbox_id is distinct from old.daytona_sandbox_id then
+    new.provider_computer_id := new.daytona_sandbox_id;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger runtime_computers_sync_legacy_daytona_handle
+  before insert or update of provider_computer_id, daytona_sandbox_id
+  on runtime_computers
+  for each row execute function runtime_computer_sync_legacy_daytona_handle();
 
 -- New callers use this provider-neutral, immutable placement claim. Retain the
 -- historical overload so older deployed app revisions keep their Daytona
