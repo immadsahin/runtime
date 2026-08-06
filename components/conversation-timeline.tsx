@@ -1,23 +1,27 @@
 "use client";
 
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { Brain, ChevronRight, Terminal, Wrench } from "lucide-react";
 import { useEffect, useRef } from "react";
 
+import { Markdown } from "@/components/markdown";
 import type {
   AgentEvent,
   ContentBlock,
   ConversationMessage,
 } from "@/lib/runtime/agent-protocol";
+import {
+  describeToolUse,
+  formatTokens,
+  summarizeToolResult,
+} from "@/lib/runtime/conversation-format";
 
 /**
  * The Conversation projection of the Workspace Session — a virtualized ordered
- * list of AgentEvents. NOT a chat view. Every entry is rendered from one
- * AgentEvent without any derivation from PTY output or heuristics: the event
- * stream is the source of truth (see docs/architecture/session-contract.md).
- *
- * Rendering is intentionally minimal in Phase 2: correctness > polish. Fancy
- * grouping / markdown / syntax highlighting / collapsing thinking is deferred
- * to Phase 7 dogfood insights.
+ * list of AgentEvents rendered as a light, sleek chat. Every entry comes from
+ * one AgentEvent; nothing is derived from PTY output (see
+ * docs/architecture/session-contract.md). Assistant prose renders as a bordered
+ * card, user turns as a right-aligned bubble, and tool activity as muted lines.
  */
 export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
   const parentRef = useRef<HTMLDivElement | null>(null);
@@ -26,13 +30,12 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
   const virtualizer = useVirtualizer({
     count: events.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 80,
+    estimateSize: () => 88,
     overscan: 8,
   });
 
-  // Auto-follow: scroll to the bottom when new events arrive, but only if the
-  // user hasn't scrolled up. Simple heuristic: if we were near-bottom before
-  // the new event, stay near-bottom. If they scrolled away, honor that.
+  // Auto-follow: keep pinned to the bottom as events arrive, unless the user
+  // scrolled up (then honor their position).
   useEffect(() => {
     if (!stickToBottom.current) return;
     if (events.length === 0) return;
@@ -47,10 +50,11 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
         stickToBottom.current =
           el.scrollHeight - el.scrollTop - el.clientHeight < 120;
       }}
-      className="h-full min-h-0 overflow-auto bg-neutral-950 font-mono text-xs text-neutral-200"
+      className="h-full min-h-0 overflow-auto bg-white text-[13.5px] leading-relaxed text-neutral-800"
     >
       {events.length === 0 && (
-        <div className="p-3 text-neutral-500">
+        <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-6 text-sm text-neutral-400">
+          <span className="size-1.5 animate-pulse rounded-full bg-neutral-300" />
           Waiting for Claude to speak…
         </div>
       )}
@@ -69,9 +73,11 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
                 transform: `translateY(${row.start}px)`,
                 width: "100%",
               }}
-              className="border-b border-neutral-900 px-3 py-2"
+              className="px-4 py-2"
             >
-              <EventRow event={event} />
+              <div className="mx-auto max-w-3xl">
+                <EventRow event={event} />
+              </div>
             </div>
           );
         })}
@@ -84,15 +90,27 @@ function EventRow({ event }: { event: AgentEvent }) {
   switch (event.t) {
     case "state":
       return (
-        <div className="text-[10px] uppercase tracking-wider text-neutral-500">
-          state · {event.state}
+        <div className="flex items-center gap-2 py-1 text-[10px] font-medium uppercase tracking-wider text-neutral-400">
+          <span className="h-px w-4 bg-neutral-200" />
+          session {event.state}
         </div>
       );
     case "usage":
       return (
-        <div className="text-[10px] text-neutral-500">
-          usage · in {event.input_tokens} · out {event.output_tokens} · cache-r{" "}
-          {event.cache_read_input_tokens}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1 font-mono text-[10px] text-neutral-400">
+          <span className="uppercase tracking-wider text-neutral-400">usage</span>
+          <span>
+            in <span className="text-neutral-600">{formatTokens(event.input_tokens)}</span>
+          </span>
+          <span>
+            out <span className="text-neutral-600">{formatTokens(event.output_tokens)}</span>
+          </span>
+          <span>
+            cache-r{" "}
+            <span className="text-neutral-600">
+              {formatTokens(event.cache_read_input_tokens)}
+            </span>
+          </span>
         </div>
       );
     case "message":
@@ -101,11 +119,19 @@ function EventRow({ event }: { event: AgentEvent }) {
 }
 
 function MessageRow({ message }: { message: ConversationMessage }) {
-  return (
-    <div className="space-y-1">
-      <div className="text-[10px] uppercase tracking-wider text-neutral-500">
-        {message.role}
+  if (message.role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] rounded-2xl bg-neutral-100 px-3.5 py-2.5 text-neutral-800">
+          {message.content.map((block, i) => (
+            <BlockRow key={i} block={block} />
+          ))}
+        </div>
       </div>
+    );
+  }
+  return (
+    <div className="min-w-0 space-y-2">
       {message.content.map((block, i) => (
         <BlockRow key={i} block={block} />
       ))}
@@ -116,34 +142,75 @@ function MessageRow({ message }: { message: ConversationMessage }) {
 function BlockRow({ block }: { block: ContentBlock }) {
   switch (block.type) {
     case "text":
-      return <pre className="whitespace-pre-wrap text-neutral-100">{block.text}</pre>;
+      // Assistant prose renders plain on white (per the light reference); the
+      // user bubble supplies its own container.
+      return <Markdown>{block.text}</Markdown>;
     case "thinking":
       return (
-        <div className="text-[10px] italic text-neutral-500">
-          thinking…
+        <div className="flex items-center gap-1.5 text-[11px] italic text-neutral-400">
+          <Brain className="size-3" />
+          Thinking
         </div>
       );
     case "tool_use":
-      return (
-        <div className="rounded bg-neutral-900 p-2 text-neutral-300">
-          <span className="text-purple-300">tool</span>{" "}
-          <span className="font-semibold">{block.name}</span>
-          <pre className="mt-1 whitespace-pre-wrap text-neutral-400">
-            {JSON.stringify(block.input, null, 2)}
-          </pre>
-        </div>
-      );
+      return <ToolUseRow name={block.name} input={block.input} />;
     case "tool_result":
-      return (
-        <div className="rounded bg-neutral-900 p-2 text-neutral-400">
-          <span className="text-blue-300">tool-result</span>{" "}
-          <span className="text-neutral-500">→ {block.toolUseId}</span>
-          <pre className="mt-1 whitespace-pre-wrap">
-            {typeof block.content === "string"
-              ? block.content
-              : JSON.stringify(block.content, null, 2)}
-          </pre>
-        </div>
-      );
+      return <ToolResultRow content={block.content} />;
   }
+}
+
+function ToolUseRow({ name, input }: { name: string; input: unknown }) {
+  const summary = describeToolUse(name, input);
+  const isBash = name === "Bash";
+  return (
+    <details className="group">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-[12px]">
+        <ChevronRight className="size-3 shrink-0 text-neutral-300 transition-transform group-open:rotate-90" />
+        {isBash ? (
+          <Terminal className="size-3.5 shrink-0 text-neutral-400" />
+        ) : (
+          <Wrench className="size-3.5 shrink-0 text-neutral-400" />
+        )}
+        <span className="shrink-0 font-medium text-neutral-600">{name}</span>
+        {summary && (
+          <span
+            className={`truncate text-neutral-400 ${isBash ? "font-mono" : ""}`}
+            title={summary}
+          >
+            {summary}
+          </span>
+        )}
+      </summary>
+      <pre className="mt-1 ml-[18px] overflow-x-auto rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 font-mono text-[11px] text-neutral-500">
+        {JSON.stringify(input, null, 2)}
+      </pre>
+    </details>
+  );
+}
+
+function ToolResultRow({ content }: { content: unknown }) {
+  const { text, preview, truncated, lineCount } = summarizeToolResult(content);
+  return (
+    <details className="group">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-[12px]">
+        <ChevronRight className="size-3 shrink-0 text-neutral-300 transition-transform group-open:rotate-90" />
+        <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-neutral-400">
+          result
+        </span>
+        <span className="truncate font-mono text-[11px] text-neutral-400" title={preview}>
+          {preview}
+        </span>
+        {lineCount > 1 && (
+          <span className="ml-auto shrink-0 font-mono text-[10px] text-neutral-300">
+            {lineCount} lines
+          </span>
+        )}
+      </summary>
+      {truncated && (
+        <pre className="mt-1 ml-[18px] max-h-96 overflow-auto rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 font-mono text-[11px] whitespace-pre-wrap text-neutral-500">
+          {text}
+        </pre>
+      )}
+    </details>
+  );
 }
