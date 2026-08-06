@@ -29,6 +29,30 @@ func TestGoldenFixtures(t *testing.T) {
 	}
 }
 
+// TestPtyOutputSeqZeroMarshals guards the marshal direction the golden-fixture
+// decode test misses: an output frame with seq 0 must serialize as `"seq":0`,
+// not drop it (omitempty on a plain int did, which the zod side rejected as an
+// "Invalid PTY frame"). Non-output frames must still omit seq.
+func TestPtyOutputSeqZeroMarshals(t *testing.T) {
+	zero := 0
+	out, err := json.Marshal(PtyServerMessage{T: "output", Data: "x", Seq: &zero})
+	if err != nil {
+		t.Fatalf("marshal output: %v", err)
+	}
+	if got := string(out); got != `{"t":"output","data":"x","seq":0}` {
+		t.Errorf("output seq 0 not preserved: %s", got)
+	}
+
+	writer := true
+	role, err := json.Marshal(PtyServerMessage{T: "role", Writer: &writer})
+	if err != nil {
+		t.Fatalf("marshal role: %v", err)
+	}
+	if got := string(role); got != `{"t":"role","writer":true}` {
+		t.Errorf("role frame should omit seq: %s", got)
+	}
+}
+
 func decodeInto(name string, raw json.RawMessage) error {
 	switch name {
 	case "RuntimeTokenClaims":

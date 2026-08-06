@@ -250,23 +250,33 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 		if output == "" {
 			return nil
 		}
-		return writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: seq})
+		return writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(seq)})
 	})
 	go coalescer.Run()
 	defer func() {
 		coalescer.Stop()
 		if output := redactor.Flush(); output != "" {
-			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output})
+			_ = writeFrame(protocol.PtyServerMessage{T: "output", Data: output, Seq: intptr(coalescer.NextSeq())})
 		}
 	}()
 
-	go pumpOut(sess, coalescer, writeFrame)
+	go pumpOut(sess, coalescer, writeFrame, func() bool {
+		return s.ws.SessionAlive(context.Background(), claims.WorkspaceID)
+	})
 	pumpIn(conn, sess, attachment.IsWriter, writeFrame)
 }
 
 // pumpOut reads PTY bytes and hands them to the coalescer, which decides when
-// to flush an `output` frame. On PTY EOF/error, sends `exit` and returns.
-func pumpOut(sess *ptyx.Session, c *ptyx.Coalescer, send func(protocol.PtyServerMessage) error) {
+// to flush an `output` frame. On PTY EOF/error it returns; it only sends `exit`
+// if the tmux session is actually gone.
+//
+// The PTY is a `tmux attach` client, and that client EOFs on *detach* (a
+// reconnect, resize race, or a competing attach) just as it does on Claude's
+// real *exit*. Reporting exit on every EOF made the UI show "Claude exited"
+// while Claude was still sitting at its prompt, and each false exit triggered
+// another reconnect. sessionAlive() distinguishes the two: if the session still
+// exists it was a detach — close quietly and let the client re-attach.
+func pumpOut(sess *ptyx.Session, c *ptyx.Coalescer, send func(protocol.PtyServerMessage) error, sessionAlive func() bool) {
 	buf := make([]byte, 8192)
 	for {
 		n, err := sess.Read(buf)
@@ -274,7 +284,9 @@ func pumpOut(sess *ptyx.Session, c *ptyx.Coalescer, send func(protocol.PtyServer
 			_ = c.Write(buf[:n])
 		}
 		if err != nil {
-			_ = send(protocol.PtyServerMessage{T: "exit", Code: intptr(0)})
+			if !sessionAlive() {
+				_ = send(protocol.PtyServerMessage{T: "exit", Code: intptr(0)})
+			}
 			return
 		}
 	}

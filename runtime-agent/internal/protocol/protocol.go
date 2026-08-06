@@ -43,11 +43,15 @@ func (m PtyClientMessage) Valid() bool {
 // PtyServerMessage is a frame from the agent on WS /pty.
 // t ∈ {output, role, exit, pong}.
 type PtyServerMessage struct {
-	T      string `json:"t"`
-	Data   string `json:"data,omitempty"`
-	Seq    int    `json:"seq,omitempty"`
-	Writer *bool  `json:"writer,omitempty"`
-	Code   *int   `json:"code,omitempty"`
+	T    string `json:"t"`
+	Data string `json:"data,omitempty"`
+	// Seq is a pointer, like Writer/Code, so seq 0 (the first output frame)
+	// serializes as `"seq":0` instead of being dropped by omitempty. The zod
+	// side requires seq on every output frame; a missing seq is rejected as an
+	// invalid PTY frame. Non-output frames leave it nil so it stays omitted.
+	Seq    *int  `json:"seq,omitempty"`
+	Writer *bool `json:"writer,omitempty"`
+	Code   *int  `json:"code,omitempty"`
 }
 
 // CreateWorkspaceRequest is the control-plane request to provision a workspace.
