@@ -3,7 +3,6 @@
 import Link from "next/link";
 import {
   ArrowLeft,
-  ChevronDown,
   FileDiff,
   GitBranch,
   GitPullRequest,
@@ -14,6 +13,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { ProjectWorkspaceNav } from "@/components/project-workspace-nav";
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import { WorkspaceLifecycleControls } from "@/components/workspace-lifecycle-controls";
 import { SessionComposer } from "@/components/session-composer";
@@ -25,15 +25,15 @@ import { cn } from "@/lib/utils";
 type SideTab = "diff" | "publish";
 
 export function WorkspaceStudio({
-  project,
   workspace,
-  workspaces,
+  allProjects,
+  allWorkspaces,
   pullRequest,
   initialPrompt,
 }: {
-  project: Project;
   workspace: Workspace;
-  workspaces: Workspace[];
+  allProjects: Project[];
+  allWorkspaces: Workspace[];
   pullRequest: WorkspacePullRequest | null;
   /** First prompt carried in from the new-session screen, sent once connected. */
   initialPrompt?: string;
@@ -47,38 +47,15 @@ export function WorkspaceStudio({
   return (
     <div className="studio-shell">
       <aside className="studio-sidebar">
-        <div className="studio-project-head">
+        <div className="studio-sidebar-top">
           <Link href="/" className="studio-back"><ArrowLeft /> Home</Link>
-          <p className="studio-eyebrow">PROJECT</p>
-          <h1 title={project.fullName}>{project.fullName}</h1>
-          <span><GitBranch /> {project.defaultBranch}</span>
+          <Link href="/new" className="studio-back" title="New session"><Plus /> New</Link>
         </div>
-        <Link href="/new" className="studio-new-thread">
-          <Plus /> New session
-        </Link>
-        <div className="studio-thread-label"><span>WORKSPACES</span><span>{workspaces.length}</span></div>
-        <nav className="studio-thread-list" aria-label="Project workspaces">
-          {workspaces.map((item) => {
-            const selected = item.id === workspace.id;
-            return (
-              <Link
-                key={item.id}
-                href={`/workspaces/${item.id}`}
-                className={cn("studio-thread", selected && "is-selected")}
-              >
-                <span className={cn("studio-status", `is-${item.status}`)} />
-                <span className="studio-thread-copy">
-                  <strong>{item.branch}</strong>
-                  <small>{item.status === "ready" ? "ready" : item.status} · worktree</small>
-                </span>
-                {selected && <ChevronDown className="studio-thread-chevron" />}
-              </Link>
-            );
-          })}
-        </nav>
-        <div className="studio-sidebar-foot">
-          <span>isolated from</span><code>{workspace.baseBranch}</code>
-        </div>
+        <ProjectWorkspaceNav
+          projects={allProjects}
+          workspaces={allWorkspaces}
+          activeWorkspaceId={workspace.id}
+        />
       </aside>
 
       <section className="studio-chat">

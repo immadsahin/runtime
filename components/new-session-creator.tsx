@@ -32,9 +32,19 @@ const SANDBOX_SPEC = "1 vCPU · 1 GiB · 3 GiB disk";
  * from the chosen repo and opens it, carrying the first prompt along so the
  * session starts on that instruction.
  */
-export function NewSessionCreator({ projects }: { projects: Project[] }) {
+export function NewSessionCreator({
+  projects,
+  initialProjectId,
+}: {
+  projects: Project[];
+  initialProjectId?: string;
+}) {
   const router = useRouter();
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const [projectId, setProjectId] = useState(
+    initialProjectId && projects.some((p) => p.id === initialProjectId)
+      ? initialProjectId
+      : (projects[0]?.id ?? ""),
+  );
   const [message, setMessage] = useState<string | null>(null);
   const [isCreating, startCreating] = useTransition();
 

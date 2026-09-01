@@ -8,9 +8,14 @@ import type { Project } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
 
-export default async function NewSessionPage() {
+export default async function NewSessionPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ project?: string }>;
+}) {
   if (!(await getOwnerSafe())) redirect("/signin?next=/new");
 
+  const { project } = await searchParams;
   let projects: Project[] = [];
   try {
     projects = await listProjects();
@@ -20,7 +25,7 @@ export default async function NewSessionPage() {
 
   return (
     <AppShell immersive>
-      <NewSessionCreator projects={projects} />
+      <NewSessionCreator projects={projects} initialProjectId={project} />
     </AppShell>
   );
 }

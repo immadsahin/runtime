@@ -3,7 +3,13 @@ import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { getProject, getWorkspace, getWorkspacePullRequest, listWorkspaces } from "@/lib/db/repositories";
+import {
+  getProject,
+  getWorkspace,
+  getWorkspacePullRequest,
+  listProjects,
+  listWorkspaces,
+} from "@/lib/db/repositories";
 
 export const dynamic = "force-dynamic";
 
@@ -22,17 +28,18 @@ export default async function WorkspacePage({
   if (!workspace) notFound();
   const project = await getProject(workspace.projectId);
   if (!project) notFound();
-  const [pullRequest, workspaces] = await Promise.all([
+  const [pullRequest, allWorkspaces, allProjects] = await Promise.all([
     getWorkspacePullRequest(workspace.id),
-    listWorkspaces(project.id),
+    listWorkspaces(),
+    listProjects(),
   ]);
 
   return (
     <AppShell immersive>
       <WorkspaceStudio
-        project={project}
         workspace={workspace}
-        workspaces={workspaces}
+        allProjects={allProjects}
+        allWorkspaces={allWorkspaces}
         pullRequest={pullRequest}
         initialPrompt={prompt}
       />
