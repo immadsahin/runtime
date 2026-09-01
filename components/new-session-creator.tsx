@@ -7,6 +7,7 @@ import { useState, useTransition } from "react";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { SessionComposer } from "@/components/session-composer";
+import { WorkspaceCreating } from "@/components/workspace-creating";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -65,6 +66,17 @@ export function NewSessionCreator({ projects }: { projects: Project[] }) {
       router.push(`/workspaces/${result.workspace.id}${query}`);
       router.refresh();
     });
+  }
+
+  // Provisioning takes tens of seconds; show a staged progress screen instead
+  // of freezing the composer behind a spinner.
+  if (isCreating && selected) {
+    return (
+      <WorkspaceCreating
+        projectName={selected.fullName}
+        branch={selected.defaultBranch}
+      />
+    );
   }
 
   return (
