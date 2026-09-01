@@ -39,6 +39,14 @@ export type WorkspaceIdentity = Omit<RuntimeTokenClaims, "exp">;
 
 type FetchFn = typeof fetch;
 
+/**
+ * Cap every agent round-trip. A remote box behind the Daytona proxy can stall
+ * without ever erroring; the session-attach route awaits `workspaceSummary`, so
+ * an unbounded fetch there would leave the caller (and the composer) hung with
+ * no error to surface. Fail fast instead so callers can degrade or retry.
+ */
+const AGENT_REQUEST_TIMEOUT_MS = 12_000;
+
 export class AgentClient {
   private readonly target: AgentTarget;
   private readonly fetchFn: FetchFn;
@@ -184,6 +192,7 @@ export class AgentClient {
           "x-daytona-preview-token": this.target.daytonaPreviewToken,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(AGENT_REQUEST_TIMEOUT_MS),
       },
     );
 
