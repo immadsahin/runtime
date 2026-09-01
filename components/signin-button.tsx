@@ -53,9 +53,8 @@ export function SignInButton({ next = "/" }: { next?: string }) {
       <Button
         onClick={signIn}
         disabled={loading}
-        variant="outline"
         size="lg"
-        className="w-full"
+        className="w-full border-0 bg-neutral-900 text-white hover:bg-neutral-800"
       >
         {loading ? (
           <Loader2 className="size-4 animate-spin" />
