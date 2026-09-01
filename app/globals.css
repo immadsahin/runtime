@@ -95,7 +95,7 @@
    the whole studio is themed from one place. */
 .studio-shell {
   --studio-bg: #0A0A0A;
-  --studio-panel: #141414;
+  --studio-panel: #0A0A0A;
   --studio-panel-2: #1b1b1b;
   --studio-hover: #1e1e1e;
   --studio-selected: #232323;
