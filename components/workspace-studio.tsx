@@ -7,11 +7,9 @@ import {
   FileDiff,
   GitBranch,
   GitPullRequest,
-  Layers3,
   MessageSquarePlus,
   PanelRightClose,
   Plus,
-  TerminalSquare,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -48,17 +46,6 @@ export function WorkspaceStudio({
 
   return (
     <div className="studio-shell">
-      <aside className="studio-rail" aria-label="Primary navigation">
-        <Link className="studio-mark" href="/" aria-label="Runtime projects">
-          <TerminalSquare />
-        </Link>
-        <div className="studio-rail-nav">
-          <Link href="/" className="is-active" title="Workspaces"><Layers3 /></Link>
-          <Link href="/new" title="New session"><Plus /></Link>
-        </div>
-        <div className="studio-avatar" aria-label="Account">R</div>
-      </aside>
-
       <aside className="studio-sidebar">
         <div className="studio-project-head">
           <Link href="/" className="studio-back"><ArrowLeft /> Home</Link>

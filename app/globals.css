@@ -111,7 +111,7 @@
   --studio-red: #f85149;
   --studio-amber: #d29922;
   display: grid;
-  grid-template-columns: 64px 272px minmax(0, 1fr) minmax(350px, 28vw);
+  grid-template-columns: 272px minmax(0, 1fr) minmax(350px, 28vw);
   min-height: 100vh;
   overflow: hidden;
   color: var(--studio-text);
@@ -221,6 +221,6 @@
 .md-body .hljs-deletion { color: #ffdcd7; background: #67060c; }
 .md-body .hljs-addition { color: #aff5b4; background: #033a16; }
 
-@media (max-width: 1100px) { .studio-shell { grid-template-columns: 54px 230px minmax(0,1fr); }.studio-inspector { position: fixed; z-index: 20; top: 0; right: 0; width: min(440px, 92vw); height:100vh; box-shadow: -20px 0 50px rgba(0,0,0,.6); }.studio-rail { padding-inline:7px; }.studio-rail-nav a,.studio-mark { width:36px;height:36px; } }
+@media (max-width: 1100px) { .studio-shell { grid-template-columns: 230px minmax(0,1fr); }.studio-inspector { position: fixed; z-index: 20; top: 0; right: 0; width: min(440px, 92vw); height:100vh; box-shadow: -20px 0 50px rgba(0,0,0,.6); }.studio-rail { padding-inline:7px; }.studio-rail-nav a,.studio-mark { width:36px;height:36px; } }
 @media (max-width: 900px) { .studio-session-grid { grid-template-columns:1fr; grid-template-rows:minmax(250px,1fr) minmax(250px,1fr); }.studio-session-banner { flex-direction:column; }.studio-session-health { justify-content:flex-start; } }
-@media (max-width: 720px) { .studio-shell { grid-template-columns: 50px minmax(0,1fr); }.studio-sidebar { display:none; }.studio-chat-header { padding:11px 15px; }.studio-conversation { padding:18px 16px; }.studio-empty-chat { margin-top:12vh; }.studio-composer { margin:0 15px 16px; }.studio-ready { display:none; }.studio-session-banner { padding:11px; }.studio-session-health { align-items:flex-start; } }
+@media (max-width: 720px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-sidebar { display:none; }.studio-chat-header { padding:11px 15px; }.studio-conversation { padding:18px 16px; }.studio-empty-chat { margin-top:12vh; }.studio-composer { margin:0 15px 16px; }.studio-ready { display:none; }.studio-session-banner { padding:11px; }.studio-session-health { align-items:flex-start; } }
