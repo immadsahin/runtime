@@ -1,5 +1,3 @@
-import { DEV_PROJECTS, DEV_WORKSPACES, devNoSupabase } from "@/lib/dev/fixtures";
-import { devStore } from "@/lib/dev/store";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   toJob,
@@ -37,7 +35,6 @@ import type {
 // --- projects --------------------------------------------------------------
 
 export async function listProjects(): Promise<Project[]> {
-  if (devNoSupabase()) return DEV_PROJECTS;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("projects")
@@ -50,7 +47,6 @@ export async function listProjects(): Promise<Project[]> {
 }
 
 export async function getProject(id: string): Promise<Project | null> {
-  if (devNoSupabase()) return DEV_PROJECTS.find((p) => p.id === id) ?? null;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("projects")
@@ -109,10 +105,6 @@ export async function upsertProjects(
 export async function listWorkspaces(
   projectId?: string,
 ): Promise<Workspace[]> {
-  if (devNoSupabase()) {
-    const all = [...devStore.listWorkspaces(), ...DEV_WORKSPACES];
-    return projectId ? all.filter((w) => w.projectId === projectId) : all;
-  }
   const supabase = await createSupabaseServerClient();
   let query = supabase
     .from("workspaces")
@@ -128,9 +120,6 @@ export async function listWorkspaces(
 }
 
 export async function getWorkspace(id: string): Promise<Workspace | null> {
-  if (devNoSupabase()) {
-    return devStore.getWorkspace(id) ?? DEV_WORKSPACES.find((w) => w.id === id) ?? null;
-  }
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("workspaces")
@@ -149,14 +138,6 @@ export async function createWorkspaceRow(input: {
   baseBranch: string;
   provider: ProviderName;
 }): Promise<Workspace> {
-  if (devNoSupabase()) {
-    return devStore.createWorkspace({
-      projectId: input.projectId,
-      branch: input.branch,
-      baseBranch: input.baseBranch,
-      provider: input.provider,
-    });
-  }
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("workspaces")
@@ -190,20 +171,6 @@ export async function updateWorkspace(
     touchActive?: boolean;
   },
 ): Promise<void> {
-  if (devNoSupabase()) {
-    const p: Partial<Workspace> = {};
-    if (patch.status !== undefined) p.status = patch.status;
-    if (patch.phase !== undefined) p.phase = patch.phase;
-    if (patch.sandboxId !== undefined) p.sandboxId = patch.sandboxId;
-    if (patch.computerId !== undefined) p.computerId = patch.computerId;
-    if (patch.tmuxSession !== undefined) p.tmuxSession = patch.tmuxSession;
-    if (patch.agentWorkspaceId !== undefined) p.agentWorkspaceId = patch.agentWorkspaceId;
-    if (patch.worktreePath != null) p.worktreePath = patch.worktreePath;
-    if (patch.errorMessage !== undefined) p.errorMessage = patch.errorMessage;
-    if (patch.touchActive) p.lastActiveAt = new Date().toISOString();
-    devStore.updateWorkspace(id, p);
-    return;
-  }
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase
     .from("workspaces")
@@ -283,7 +250,6 @@ export async function transitionWorkspace(input: {
 export async function getRuntimeComputerByProject(
   projectId: string,
 ): Promise<RuntimeComputer | null> {
-  if (devNoSupabase()) return devStore.getComputerByProject(projectId) ?? null;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("runtime_computers")
@@ -334,7 +300,6 @@ export async function claimRuntimeComputer(input: {
   projectId: string;
   agentSecret: string;
 }): Promise<{ computer: RuntimeComputer; shouldProvision: boolean }> {
-  if (devNoSupabase()) return devStore.claimComputer(input.projectId, input.agentSecret);
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.rpc("claim_runtime_computer", {
     requested_project_id: input.projectId,
@@ -364,17 +329,6 @@ export async function updateRuntimeComputer(
     touchActive?: boolean;
   },
 ): Promise<void> {
-  if (devNoSupabase()) {
-    const p: Partial<RuntimeComputer> = {};
-    if (patch.status !== undefined) p.status = patch.status;
-    if (patch.daytonaSandboxId !== undefined) p.daytonaSandboxId = patch.daytonaSandboxId;
-    if (patch.agentBaseUrl !== undefined) p.agentBaseUrl = patch.agentBaseUrl;
-    if (patch.provisionTimings !== undefined) p.provisionTimings = patch.provisionTimings;
-    if (patch.errorMessage !== undefined) p.errorMessage = patch.errorMessage;
-    if (patch.touchActive) p.lastActiveAt = new Date().toISOString();
-    devStore.updateComputer(id, p);
-    return;
-  }
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase
     .from("runtime_computers")
@@ -409,7 +363,6 @@ export async function markRuntimeComputerStoppedIfReady(
   id: string,
   daytonaSandboxId: string,
 ): Promise<boolean> {
-  if (devNoSupabase()) return false;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("runtime_computers")
@@ -435,7 +388,6 @@ export async function markRuntimeComputerStoppedIfReady(
 export async function readRuntimeComputerSecret(
   id: string,
 ): Promise<string | null> {
-  if (devNoSupabase()) return devStore.getSecret(id) ?? null;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("runtime_computers")
@@ -450,7 +402,6 @@ export async function readRuntimeComputerSecret(
 // --- jobs ------------------------------------------------------------------
 
 export async function listJobs(workspaceId: string): Promise<Job[]> {
-  if (devNoSupabase()) return [];
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("jobs")
@@ -582,7 +533,6 @@ export async function transitionJob(input: {
 export async function getWorkspacePullRequest(
   workspaceId: string,
 ): Promise<WorkspacePullRequest | null> {
-  if (devNoSupabase()) return null;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("pull_requests")
@@ -626,7 +576,6 @@ export async function createWorkspacePullRequest(input: {
 export async function listWorkspaceSnapshots(
   workspaceId: string,
 ): Promise<WorkspaceSnapshot[]> {
-  if (devNoSupabase()) return [];
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("workspace_snapshots")

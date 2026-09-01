@@ -42,9 +42,7 @@ type EnvKey =
   // Agent engine: "jcode" provisions a jcode box; unset/other = Claude Code.
   | "RUNTIME_ENGINE"
   // Where the control plane reads jcode credentials to inject (default ~/.jcode).
-  | "JCODE_AUTH_DIR"
-  // Dev-only: run the UI on in-memory fixtures with no Supabase (never in prod).
-  | "RUNTIME_DEV_NO_SUPABASE";
+  | "JCODE_AUTH_DIR";
 
 export function optionalEnv(key: EnvKey): string | undefined {
   const value = process.env[key];
