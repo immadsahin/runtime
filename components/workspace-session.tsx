@@ -24,7 +24,7 @@ export function WorkspaceSession({
 }) {
   const terminalContainer = useRef<HTMLDivElement>(null);
   const attachment = useSessionAttachment(workspaceId);
-  const terminal = useSessionTerminal(attachment, terminalContainer);
+  const terminal = useSessionTerminal(attachment, terminalContainer, showTerminal);
   const conversation = useConversationStream(attachment);
 
   // The jcode engine has no PTY: prompts go over the /message API and the reply
