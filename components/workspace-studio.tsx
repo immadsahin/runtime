@@ -3,7 +3,6 @@
 import Link from "next/link";
 import {
   ArrowLeft,
-  CheckCircle2,
   ChevronDown,
   FileDiff,
   GitBranch,
@@ -43,7 +42,7 @@ export function WorkspaceStudio({
 }) {
   const [activeTab, setActiveTab] = useState<SideTab>("diff");
   const [rightOpen, setRightOpen] = useState(true);
-  const [showTerminal, setShowTerminal] = useState(false);
+  const [showTerminal] = useState(false);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && workspace.provider === "daytona";
 
@@ -105,17 +104,7 @@ export function WorkspaceStudio({
             </div>
           </div>
           <div className="studio-header-actions">
-            {workspace.status === "ready" && <span className="studio-ready"><CheckCircle2 /> Ready</span>}
-            {hasLiveSession && (
-              <button
-                className={cn("studio-icon-button", showTerminal && "is-active")}
-                onClick={() => setShowTerminal((open) => !open)}
-                title={showTerminal ? "Hide terminal" : "Show terminal"}
-              >
-                <TerminalSquare />
-              </button>
-            )}
-            <button className="studio-icon-button" onClick={() => setRightOpen((open) => !open)} title="Toggle inspector">
+            <button className="studio-icon-button" onClick={() => setRightOpen((open) => !open)} title="Toggle changes">
               {rightOpen ? <PanelRightClose /> : <FileDiff />}
             </button>
           </div>
