@@ -29,7 +29,7 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
+  --background: #0A0A0A;
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
@@ -94,7 +94,7 @@
 /* Workspace studio — dark application surface. Palette lives in these vars so
    the whole studio is themed from one place. */
 .studio-shell {
-  --studio-bg: #0d0d0d;
+  --studio-bg: #0A0A0A;
   --studio-panel: #141414;
   --studio-panel-2: #1b1b1b;
   --studio-hover: #1e1e1e;
