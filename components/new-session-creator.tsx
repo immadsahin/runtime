@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ChevronDown, GitBranch, LoaderCircle } from "lucide-react";
+import { Box, ChevronDown, GitBranch, LoaderCircle } from "lucide-react";
 import { useState, useTransition } from "react";
 
 import { ProjectAvatar } from "@/components/project-avatar";
@@ -16,6 +16,14 @@ import {
 import type { Project } from "@/lib/runtime/types";
 
 type CreateResponse = { workspace?: { id: string }; error?: string };
+
+/**
+ * The isolated Daytona sandbox each workspace runs in — shown on creation so
+ * it's clear the project executes in a box, not locally. Fixed spec for now
+ * (the default Daytona image); becomes a size picker when we support sizing.
+ */
+const SANDBOX_TIER = "Sandbox";
+const SANDBOX_SPEC = "1 vCPU · 1 GiB · 3 GiB disk";
 
 /**
  * The new-session screen: a faded wordmark over a centered composer, with a
@@ -64,7 +72,7 @@ export function NewSessionCreator({ projects }: { projects: Project[] }) {
       <div className="w-full max-w-2xl">
         <p
           aria-hidden
-          className="pointer-events-none mb-6 select-none text-center text-[13vw] font-bold leading-none tracking-tight text-neutral-200 sm:text-[96px]"
+          className="pointer-events-none mb-6 select-none text-center text-[13vw] font-bold leading-none tracking-tight text-neutral-800 sm:text-[96px]"
         >
           runtime
         </p>
@@ -82,7 +90,7 @@ export function NewSessionCreator({ projects }: { projects: Project[] }) {
           <>
             <div className="relative">
               {isCreating && (
-                <div className="absolute inset-0 z-10 grid place-items-center rounded-[14px] bg-white/60">
+                <div className="absolute inset-0 z-10 grid place-items-center rounded-[14px] bg-background/60">
                   <LoaderCircle className="text-muted-foreground size-5 animate-spin" />
                 </div>
               )}
@@ -94,11 +102,11 @@ export function NewSessionCreator({ projects }: { projects: Project[] }) {
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex items-center gap-2 rounded-md px-1.5 py-1 text-neutral-700 transition-colors hover:bg-neutral-100"
+                    className="flex items-center gap-2 rounded-md px-1.5 py-1 text-foreground transition-colors hover:bg-accent"
                   >
                     <ProjectAvatar name={selected?.name ?? "?"} className="size-5" />
                     {selected?.name ?? "Select a repository"}
-                    <ChevronDown className="size-4 text-neutral-400" />
+                    <ChevronDown className="size-4 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="center" className="max-h-72 w-64 overflow-y-auto">
@@ -114,10 +122,20 @@ export function NewSessionCreator({ projects }: { projects: Project[] }) {
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              <span className="text-neutral-300">/</span>
-              <span className="flex items-center gap-1.5 text-neutral-500">
+              <span className="text-muted-foreground">/</span>
+              <span className="flex items-center gap-1.5 text-muted-foreground">
                 <GitBranch className="size-4" />
                 {selected?.defaultBranch ?? "main"}
+              </span>
+
+              <span className="text-muted-foreground">·</span>
+              <span
+                className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[13px] text-foreground"
+                title="This workspace runs in an isolated Daytona sandbox — the project is cloned into a cloud box, not your machine."
+              >
+                <Box className="size-4 text-muted-foreground" />
+                <span className="font-medium">{SANDBOX_TIER}</span>
+                <span className="text-muted-foreground">{SANDBOX_SPEC}</span>
               </span>
             </div>
 
