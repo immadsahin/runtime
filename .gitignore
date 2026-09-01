@@ -45,3 +45,8 @@ next-env.d.ts
 /.artifacts/
 /.hoplite/attachments/
 /.hoplite/archive/
+
+# jcode dev/build artifacts
+/runtime-agent/jcode-smoke
+/runtime-agent/runtime-agent
+bun.lock
