@@ -240,11 +240,21 @@ export function jcodePaths(root: string): JcodePaths {
   };
 }
 
-/** Install jcode via npm on the box and echo the linux binary path (last line). */
-export function jcodeInstallScript(): string {
+/**
+ * jcode version installed on each box. Defaults to `latest` (ride new releases),
+ * with a known-good FALLBACK the deploy auto-reinstalls if `latest` fails to
+ * come up healthy — so a bad release can't take provisioning down. Override
+ * either via env.
+ */
+export const JCODE_SDK_VERSION = process.env.JCODE_SDK_VERSION || "latest";
+export const JCODE_SDK_FALLBACK_VERSION =
+  process.env.JCODE_SDK_FALLBACK_VERSION || "1.1.0";
+
+/** Install a jcode version via npm on the box and echo the linux binary path. */
+export function jcodeInstallScript(version: string = JCODE_SDK_VERSION): string {
   return (
     `cd /tmp && npm init -y -s >/dev/null 2>&1 && ` +
-    `npm i @1jehuang/jcode-sdk >/tmp/jcode-npm.log 2>&1; ` +
+    `npm i @1jehuang/jcode-sdk@${version} >/tmp/jcode-npm.log 2>&1; ` +
     `ls /tmp/node_modules/@1jehuang/jcode-linux-*/bin/jcode`
   );
 }
@@ -300,8 +310,11 @@ export async function injectJcodeCreds(
 }
 
 /** Install jcode and return its binary path, or throw with the npm log. */
-export async function installJcode(io: BoxIO): Promise<string> {
-  const res = await io.exec(`bash -lc ${shellQuote(jcodeInstallScript())}`);
+export async function installJcode(
+  io: BoxIO,
+  version: string = JCODE_SDK_VERSION,
+): Promise<string> {
+  const res = await io.exec(`bash -lc ${shellQuote(jcodeInstallScript(version))}`);
   const bin = res.stdout
     .split("\n")
     .map((s) => s.trim())
@@ -374,7 +387,9 @@ export async function waitForJcodeAgentHealth(
 
 /**
  * Full jcode deploy on one box: inject creds → install jcode → start bridge →
- * upload + boot the agent (jcode mode) → wait for health. Returns the agent log.
+ * boot the agent → wait for health. Rides `latest` by default; if that version
+ * fails to come up healthy (e.g. a breaking release), it resets and retries once
+ * with the known-good fallback, so a bad `latest` can't take provisioning down.
  */
 export async function deployJcode(
   io: BoxIO,
@@ -383,8 +398,42 @@ export async function deployJcode(
   opts: WaitOptions & { root: string; authJson: Buffer; refreshJson?: Buffer },
 ): Promise<{ logTail: string }> {
   await injectJcodeCreds(io, opts.root, opts.authJson, opts.refreshJson);
-  const jcodeBin = await installJcode(io);
-  await startJcodeBridge(io, jcodeBin, opts.root, opts);
-  await bootJcodeAgent(io, binary, secret, opts.root);
-  return waitForJcodeAgentHealth(io, opts.root, opts);
+  try {
+    return await bootJcodeStack(io, binary, secret, opts.root, JCODE_SDK_VERSION, opts);
+  } catch (err) {
+    if (JCODE_SDK_VERSION === JCODE_SDK_FALLBACK_VERSION) throw err;
+    console.warn(
+      `jcode ${JCODE_SDK_VERSION} failed to come up; falling back to ${JCODE_SDK_FALLBACK_VERSION}. Cause: ${
+        (err as Error).message
+      }`,
+    );
+    await resetJcode(io, opts.root).catch(() => {});
+    return bootJcodeStack(io, binary, secret, opts.root, JCODE_SDK_FALLBACK_VERSION, opts);
+  }
+}
+
+/** One install→bridge→agent→health attempt at a specific jcode version. */
+async function bootJcodeStack(
+  io: BoxIO,
+  binary: Buffer,
+  secret: string,
+  root: string,
+  version: string,
+  opts: WaitOptions,
+): Promise<{ logTail: string }> {
+  const jcodeBin = await installJcode(io, version);
+  await startJcodeBridge(io, jcodeBin, root, opts);
+  await bootJcodeAgent(io, binary, secret, root);
+  return waitForJcodeAgentHealth(io, root, opts);
+}
+
+/** Tear down a half-started jcode stack so a fallback version installs clean. */
+async function resetJcode(io: BoxIO, root: string): Promise<void> {
+  const p = jcodePaths(root);
+  await io.exec(
+    `bash -lc ${shellQuote(
+      `pkill -f jcode || true; pkill -f runtime-agent || true; ` +
+        `rm -f ${p.apiSocket} ${p.daemonSocket}; rm -rf /tmp/node_modules/@1jehuang`,
+    )}`,
+  );
 }
