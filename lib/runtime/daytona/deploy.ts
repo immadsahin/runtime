@@ -201,3 +201,190 @@ export async function deployAgent(
   await bootAgent(io, secret, options.env);
   return waitForAgentHealth(io, options);
 }
+
+// ---------------------------------------------------------------------------
+// jcode engine deploy
+//
+// The jcode path runs the agent with RUNTIME_ENGINE=jcode against a
+// `jcode api-bridge` on the box. It is root-parameterized because it runs on a
+// default Daytona image (home /home/daytona), not the frozen /home/runtime
+// snapshot — so it does NOT reuse the AGENT_* constants above. The recipe is the
+// one validated on real Daytona (.context/provision-jcode-box.mjs).
+// ---------------------------------------------------------------------------
+
+/** Every box path the jcode deploy touches, derived from the box's home. */
+export type JcodePaths = {
+  runDir: string;
+  apiSocket: string;
+  daemonSocket: string;
+  credDirs: string[];
+  bridgeLog: string;
+  agentBinary: string;
+  agentGz: string;
+  agentLog: string;
+};
+
+export function jcodePaths(root: string): JcodePaths {
+  const runDir = `${root}/.jcode-run`;
+  return {
+    runDir,
+    apiSocket: `${root}/jcode-api.sock`,
+    daemonSocket: `${runDir}/daemon.sock`,
+    // Both dirs: jcode reads creds from ~/.jcode (macOS) and ~/.config/jcode
+    // (linux/XDG). Writing both makes the recipe host-agnostic.
+    credDirs: [`${root}/.jcode`, `${root}/.config/jcode`],
+    bridgeLog: `${root}/jcode-bridge.log`,
+    agentBinary: `${root}/runtime-agent`,
+    agentGz: `${root}/runtime-agent.gz`,
+    agentLog: `${root}/runtime-agent.log`,
+  };
+}
+
+/** Install jcode via npm on the box and echo the linux binary path (last line). */
+export function jcodeInstallScript(): string {
+  return (
+    `cd /tmp && npm init -y -s >/dev/null 2>&1 && ` +
+    `npm i @1jehuang/jcode-sdk >/tmp/jcode-npm.log 2>&1; ` +
+    `ls /tmp/node_modules/@1jehuang/jcode-linux-*/bin/jcode`
+  );
+}
+
+/**
+ * Launch the api-bridge detached. VERIFIED ON DAYTONA: the detached env lacks
+ * USER/XDG_RUNTIME_DIR, so jcode resolves its internal daemon socket to a broken
+ * /tmp/jcode-user path and drops the connection on the first session op. Setting
+ * a real user + a writable runtime dir AND pinning the internal --socket makes
+ * the bridge and its spawned `serve` daemon agree. `-p claude` selects the
+ * injected subscription credential.
+ */
+export function jcodeBridgeScript(jcodeBin: string, root: string): string {
+  const p = jcodePaths(root);
+  // bypassPermissions: the api-bridge can't relay approval prompts, so without
+  // this jcode auto-BLOCKS risky commands ("blocked and cannot be confirmed").
+  // The box is a disposable per-workspace sandbox, so bypassing is the correct
+  // autonomy model (mirrors Claude's --permission-mode bypassPermissions).
+  const env =
+    `HOME=${root} USER=runtime XDG_RUNTIME_DIR=${p.runDir} TMPDIR=${p.runDir} ` +
+    `JCODE_CLAUDE_SDK_PERMISSION_MODE=bypassPermissions ` +
+    `JCODE_CLAUDE_CLI_PERMISSION_MODE=bypassPermissions`;
+  return (
+    `mkdir -p ${p.runDir} && chmod 700 ${p.runDir} && ` +
+    `setsid env ${env} ${shellQuote(jcodeBin)} --socket ${p.daemonSocket} ` +
+    `api-bridge --api-socket ${p.apiSocket} -p claude --no-update ` +
+    `> ${p.bridgeLog} 2>&1 < /dev/null &`
+  );
+}
+
+/** Launch the runtime-agent in jcode mode, detached, pointed at the bridge. */
+export function jcodeAgentLaunchScript(root: string, secret: string): string {
+  const p = jcodePaths(root);
+  const assignments =
+    `RUNTIME_AGENT_SECRET=${shellQuote(secret)} RUNTIME_AGENT_ROOT=${root} ` +
+    `PORT=${AGENT_PORT} RUNTIME_ENGINE=jcode JCODE_API_SOCKET=${p.apiSocket} HOME=${root}`;
+  return `setsid env ${assignments} ${p.agentBinary} > ${p.agentLog} 2>&1 < /dev/null &`;
+}
+
+/** Write the subscription credential into both cred dirs on the box. */
+export async function injectJcodeCreds(
+  io: BoxIO,
+  root: string,
+  authJson: Buffer,
+  refreshJson?: Buffer,
+): Promise<void> {
+  for (const dir of jcodePaths(root).credDirs) {
+    await io.exec(`mkdir -p ${dir}`);
+    await io.upload(authJson, `${dir}/auth.json`);
+    if (refreshJson) await io.upload(refreshJson, `${dir}/auth-refresh-state.json`);
+    await io.exec(`chmod 600 ${dir}/auth.json`);
+  }
+}
+
+/** Install jcode and return its binary path, or throw with the npm log. */
+export async function installJcode(io: BoxIO): Promise<string> {
+  const res = await io.exec(`bash -lc ${shellQuote(jcodeInstallScript())}`);
+  const bin = res.stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .find((s) => s.endsWith("/bin/jcode"));
+  if (!bin) throw new Error(`jcode install: binary not found. output:\n${res.stdout}`);
+  return bin;
+}
+
+/** Launch the bridge and poll until its API socket exists, or throw with the log. */
+export async function startJcodeBridge(
+  io: BoxIO,
+  jcodeBin: string,
+  root: string,
+  options: WaitOptions = {},
+): Promise<void> {
+  const p = jcodePaths(root);
+  const attempts = options.attempts ?? 40;
+  const intervalMs = options.intervalMs ?? 500;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
+  await io.launch(`bash -lc ${shellQuote(jcodeBridgeScript(jcodeBin, root))}`);
+  for (let i = 0; i < attempts; i += 1) {
+    const probe = await io.exec(`test -S ${p.apiSocket} && echo yes || echo no`);
+    if (probe.stdout.trim() === "yes") return;
+    await sleep(intervalMs);
+  }
+  const log = await io.exec(`cat ${p.bridgeLog} 2>&1 || true`);
+  throw new Error(`jcode bridge socket ${p.apiSocket} never appeared. log:\n${log.stdout.trim()}`);
+}
+
+/** Upload + unpack + launch the agent in jcode mode (mirrors bootAgent). */
+export async function bootJcodeAgent(
+  io: BoxIO,
+  binary: Buffer,
+  secret: string,
+  root: string,
+): Promise<void> {
+  const p = jcodePaths(root);
+  await io.upload(compressAgent(binary), p.agentGz);
+  const prep = await io.exec(
+    `bash -lc ${shellQuote(`gunzip -f ${p.agentGz} && chmod 755 ${p.agentBinary}`)}`,
+  );
+  if (prep.exitCode !== 0) {
+    throw new Error(`jcode agent prep failed (exit ${prep.exitCode}): ${prep.stdout.trim()}`);
+  }
+  await io.launch(`bash -lc ${shellQuote(jcodeAgentLaunchScript(root, secret))}`);
+}
+
+/** Poll the agent's loopback /health until it binds, or throw with the log. */
+export async function waitForJcodeAgentHealth(
+  io: BoxIO,
+  root: string,
+  options: WaitOptions = {},
+): Promise<{ logTail: string }> {
+  const p = jcodePaths(root);
+  const attempts = options.attempts ?? 40;
+  const intervalMs = options.intervalMs ?? 500;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
+  for (let i = 0; i < attempts; i += 1) {
+    const probe = await io.exec(`bash -lc ${shellQuote(agentHealthProbe())}`);
+    if (probe.stdout.trim() === "200") {
+      return { logTail: (await io.exec(`cat ${p.agentLog} 2>&1 || true`)).stdout.trim() };
+    }
+    await sleep(intervalMs);
+  }
+  const log = await io.exec(`cat ${p.agentLog} 2>&1 || true`);
+  throw new Error(`jcode agent did not bind :${AGENT_PORT}. log:\n${log.stdout.trim()}`);
+}
+
+/**
+ * Full jcode deploy on one box: inject creds → install jcode → start bridge →
+ * upload + boot the agent (jcode mode) → wait for health. Returns the agent log.
+ */
+export async function deployJcode(
+  io: BoxIO,
+  binary: Buffer,
+  secret: string,
+  opts: WaitOptions & { root: string; authJson: Buffer; refreshJson?: Buffer },
+): Promise<{ logTail: string }> {
+  await injectJcodeCreds(io, opts.root, opts.authJson, opts.refreshJson);
+  const jcodeBin = await installJcode(io);
+  await startJcodeBridge(io, jcodeBin, opts.root, opts);
+  await bootJcodeAgent(io, binary, secret, opts.root);
+  return waitForJcodeAgentHealth(io, opts.root, opts);
+}

@@ -66,6 +66,16 @@ export class AgentClient {
     return this.post(`/workspaces/${identity.workspaceId}/stop`, identity);
   }
 
+  /**
+   * Deliver a user prompt to the workspace's agent session (jcode engine). The
+   * reply streams back on the Conversation SSE; this just starts the turn.
+   */
+  sendMessage(identity: WorkspaceIdentity, content: string): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/message`, identity, {
+      content,
+    });
+  }
+
   resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
     return this.post(`/workspaces/${identity.workspaceId}/resume`, identity);
   }

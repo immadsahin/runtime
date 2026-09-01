@@ -10,6 +10,12 @@ import {
   bootAgent,
   compressAgent,
   deployAgent,
+  deployJcode,
+  injectJcodeCreds,
+  installJcode,
+  jcodeAgentLaunchScript,
+  jcodeBridgeScript,
+  jcodePaths,
   ProvisionTimer,
   shellQuote,
   uploadAgent,
@@ -194,4 +200,76 @@ test("deployAgent runs upload → prep → launch → health in order", async ()
   };
   await deployAgent(io, Buffer.from("bin"), "secret", { attempts: 1, sleep: noSleep });
   assert.deepEqual(order.slice(0, 4), ["upload", "prep", "launch", "health"]);
+});
+
+// --- jcode engine deploy ---------------------------------------------------
+
+test("jcodePaths derives box paths from a non-/home/runtime root", () => {
+  const p = jcodePaths("/home/daytona");
+  assert.equal(p.apiSocket, "/home/daytona/jcode-api.sock");
+  assert.equal(p.daemonSocket, "/home/daytona/.jcode-run/daemon.sock");
+  assert.deepEqual(p.credDirs, ["/home/daytona/.jcode", "/home/daytona/.config/jcode"]);
+  assert.equal(p.agentBinary, "/home/daytona/runtime-agent");
+});
+
+test("jcodeBridgeScript carries the verified socket fix", () => {
+  const s = jcodeBridgeScript("/tmp/node_modules/@1jehuang/jcode-linux-x64/bin/jcode", "/home/daytona");
+  // The fix: real USER + writable runtime dir + pinned internal --socket.
+  assert.ok(s.includes("USER=runtime"), "USER must be set");
+  assert.ok(s.includes("XDG_RUNTIME_DIR=/home/daytona/.jcode-run"), "XDG_RUNTIME_DIR must be set");
+  assert.ok(s.includes("TMPDIR=/home/daytona/.jcode-run"));
+  assert.ok(s.includes("--socket /home/daytona/.jcode-run/daemon.sock"), "internal daemon socket must be pinned");
+  assert.ok(s.includes("api-bridge --api-socket /home/daytona/jcode-api.sock"));
+  assert.ok(s.includes("-p claude"));
+  assert.ok(s.includes("JCODE_CLAUDE_SDK_PERMISSION_MODE=bypassPermissions"), "must bypass approval");
+  assert.ok(s.includes("setsid") && s.trimEnd().endsWith("&"), "must launch detached");
+});
+
+test("jcodeAgentLaunchScript runs the agent in jcode mode against the bridge", () => {
+  const s = jcodeAgentLaunchScript("/home/daytona", "s3cr3t");
+  assert.ok(s.includes("RUNTIME_ENGINE=jcode"));
+  assert.ok(s.includes("JCODE_API_SOCKET=/home/daytona/jcode-api.sock"));
+  assert.ok(s.includes("RUNTIME_AGENT_SECRET='s3cr3t'"));
+  assert.ok(s.includes("RUNTIME_AGENT_ROOT=/home/daytona"));
+  assert.ok(s.includes("/home/daytona/runtime-agent"));
+});
+
+test("installJcode returns the linux binary path from the install output", async () => {
+  const { io } = fakeBox([
+    { match: (c) => c.includes("npm i @1jehuang/jcode-sdk"), result: { stdout: "\n/tmp/node_modules/@1jehuang/jcode-linux-x64/bin/jcode\n", exitCode: 0 } },
+  ]);
+  assert.equal(await installJcode(io), "/tmp/node_modules/@1jehuang/jcode-linux-x64/bin/jcode");
+});
+
+test("injectJcodeCreds uploads auth.json to both cred dirs", async () => {
+  const { io, uploads } = fakeBox([]);
+  await injectJcodeCreds(io, "/home/daytona", Buffer.from("AUTH"), Buffer.from("REFRESH"));
+  const authPaths = uploads.filter((u) => u.path.endsWith("/auth.json")).map((u) => u.path);
+  assert.deepEqual(authPaths, ["/home/daytona/.jcode/auth.json", "/home/daytona/.config/jcode/auth.json"]);
+  assert.ok(uploads.some((u) => u.path.endsWith("/.jcode/auth-refresh-state.json")));
+});
+
+test("deployJcode runs creds → install → bridge → agent → health in order", async () => {
+  const order: string[] = [];
+  const io: BoxIO = {
+    exec: async (command) => {
+      if (command.includes("mkdir -p") && command.includes("jcode")) order.push("creds");
+      if (command.includes("npm i @1jehuang/jcode-sdk")) { order.push("install"); return { stdout: "/tmp/node_modules/@1jehuang/jcode-linux-x64/bin/jcode", exitCode: 0 }; }
+      if (command.includes("test -S")) { order.push("socket"); return { stdout: "yes", exitCode: 0 }; }
+      if (command.includes("gunzip")) { order.push("prep"); return { stdout: "", exitCode: 0 }; }
+      if (command.includes("curl")) { order.push("health"); return { stdout: "200", exitCode: 0 }; }
+      return { stdout: "", exitCode: 0 };
+    },
+    launch: async (command) => { order.push(command.includes("api-bridge") ? "bridge" : "agent"); },
+    upload: async () => {},
+  };
+  const res = await deployJcode(io, Buffer.from("bin"), "secret", {
+    root: "/home/daytona", authJson: Buffer.from("A"), attempts: 1, sleep: noSleep,
+  });
+  // creds first, install, bridge launched + socket confirmed, agent prep+launch, health.
+  assert.deepEqual(
+    order.filter((o) => ["creds", "install", "bridge", "socket", "prep", "agent", "health"].includes(o)),
+    ["creds", "creds", "install", "bridge", "socket", "prep", "agent", "health"],
+  );
+  assert.equal(res.logTail, "");
 });
