@@ -15,6 +15,7 @@ import (
 
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
+	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/snapshot"
 	"runtime-agent/internal/tmux"
@@ -41,6 +42,18 @@ type Service struct {
 	// session start (M4 invariant #3: recording is independent of any browser).
 	recordersMu sync.Mutex
 	recorders   map[string]*cast.Recorder
+
+	// jcode, when set, runs workspaces as sessions on a jcode api-bridge instead
+	// of Claude-in-tmux. nil means the default Claude Code engine. Start, Stop,
+	// SessionLog, SessionAlive, and SendMessage branch on it.
+	jcode *jcodeEngine
+}
+
+// UseJcode switches the service to the jcode engine, driving workspaces through
+// the given (already connected) harness-API client instead of Claude-in-tmux.
+// Called once at construction when RUNTIME_ENGINE=jcode.
+func (s *Service) UseJcode(client *jcode.Client) {
+	s.jcode = newJcodeEngine(client, s.Root)
 }
 
 // workspaceFacts are the per-workspace details Create learns and Start/Resume
@@ -142,6 +155,13 @@ func (s *Service) Create(ctx context.Context, workspaceID, branch, baseRef strin
 // and launches the Workspace Summary collector for this workspace.
 func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
 	name := sessionName(workspaceID)
+	if s.jcode != nil {
+		if err := s.jcode.StartSession(ctx, workspaceID, s.worktreePath(workspaceID)); err != nil {
+			return "", err
+		}
+		s.beginSummary(workspaceID, s.worktreePath(workspaceID))
+		return name, nil
+	}
 	if s.tmux.HasSession(ctx, name) {
 		return name, nil // already running
 	}
@@ -160,6 +180,15 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 // The Summary collector is (re)started so post-restart activity is folded in.
 func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
 	name := sessionName(workspaceID)
+	if s.jcode != nil {
+		// jcode sessions live on the bridge; StartSession is idempotent and
+		// re-attaches Runtime's view. --continue semantics are the bridge's.
+		if err := s.jcode.StartSession(ctx, workspaceID, s.worktreePath(workspaceID)); err != nil {
+			return "", err
+		}
+		s.beginSummary(workspaceID, s.worktreePath(workspaceID))
+		return name, nil
+	}
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	env := claude.SessionEnv(s.env, anthropicToken)
@@ -212,11 +241,26 @@ func gitBranch(ctx context.Context, worktree string) string {
 // summary's endedAt. The Summary itself is retained so a post-stop
 // SummaryOf still returns the last-known state.
 func (s *Service) Stop(ctx context.Context, workspaceID string) error {
+	if s.jcode != nil {
+		s.jcode.StopSession(workspaceID)
+		s.endSummary(workspaceID)
+		return nil
+	}
 	// Finalize the cast BEFORE killing tmux — the recorder taps the live pane, so
 	// the pane must still exist while it drains its tail and closes the file.
 	s.stopRecorder(ctx, workspaceID)
 	s.endSummary(workspaceID)
 	return s.tmux.KillSession(ctx, sessionName(workspaceID))
+}
+
+// SendMessage delivers a user prompt to a workspace's agent session. This is the
+// jcode-mode prompt path (the Claude/tmux engine receives prompts by typing into
+// the PTY instead), so it returns an error when the jcode engine is not active.
+func (s *Service) SendMessage(workspaceID, content string) error {
+	if s.jcode == nil {
+		return fmt.Errorf("send message requires the jcode engine")
+	}
+	return s.jcode.SendMessage(workspaceID, content)
 }
 
 // SessionName exposes the tmux session name the PTY handler attaches to.
@@ -352,6 +396,9 @@ func (s *Service) stopRecorder(ctx context.Context, workspaceID string) {
 // *detach* (the tmux attach client EOFs, but Claude keeps running) apart from a
 // real process *exit* — only the latter should surface as an exit to the UI.
 func (s *Service) SessionAlive(ctx context.Context, workspaceID string) bool {
+	if s.jcode != nil {
+		return s.jcode.Active(workspaceID)
+	}
 	return s.tmux.HasSession(ctx, sessionName(workspaceID))
 }
 
@@ -402,6 +449,9 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 // directory with '/' and '.' replaced by '-'. When --continue reopens a prior
 // session it reuses that file, so "newest jsonl" == "current session."
 func (s *Service) SessionLog(workspaceID string) string {
+	if s.jcode != nil {
+		return s.jcode.ConversationLog(workspaceID)
+	}
 	slug := claudeSlug(s.worktreePath(workspaceID))
 	home, err := os.UserHomeDir()
 	if err != nil {

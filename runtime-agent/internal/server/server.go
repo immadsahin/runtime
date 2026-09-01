@@ -66,6 +66,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/archive", s.authed(s.archiveWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/restore", s.authed(s.restoreWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
+	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /workspaces/{id}/summary", s.authed(s.workspaceSummary))
@@ -196,6 +197,26 @@ func (s *Server) requireWorkspace(w http.ResponseWriter, r *http.Request, worksp
 		return false
 	}
 	return true
+}
+
+// sendMessage delivers a user prompt to the workspace's agent session (jcode
+// engine). Replaces typing into the PTY: the browser composer POSTs the prompt
+// and observes the reply on the conversation SSE stream.
+func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req struct {
+		Content string `json:"content"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Content == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "message requires content")
+		return
+	}
+	respond(w, "sent", s.ws.SendMessage(r.PathValue("id"), req.Content))
 }
 
 // pty bridges the browser WebSocket to the workspace's tmux PTY. Every attach
