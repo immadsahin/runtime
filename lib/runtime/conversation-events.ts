@@ -12,9 +12,11 @@ import type { AgentEvent } from "@/lib/runtime/agent-protocol";
  *
  *   - state events are not resumable; each fresh connect re-emits state, so
  *     we collapse to at-most-one state entry (the newest).
- *   - message/usage events carry a stable SSE id (JSONL byte offset). The
- *     agent's seq-based resume guarantees zero duplicates in the happy path,
- *     but we still dedup defensively in case of a client-side double-subscribe.
+ *   - message events UPSERT by their `uuid`: the agent streams a turn as the
+ *     same message re-emitted as it grows (a new SSE id each time), so we
+ *     replace the existing entry in place rather than append every partial.
+ *   - usage/other events carry a stable SSE id (JSONL byte offset); dedup by id
+ *     defensively against a client-side double-subscribe.
  */
 export function appendEvent(
   prev: AgentEvent[],
@@ -25,6 +27,17 @@ export function appendEvent(
   if (event.t === "state") {
     const withoutState = prev.filter((e) => e.t !== "state");
     return [...withoutState, event];
+  }
+  if (event.t === "message") {
+    // Streaming: the same uuid arrives repeatedly, growing. Replace in place so
+    // the message renders once and updates, instead of stacking partials.
+    const idx = prev.findIndex((e) => e.t === "message" && e.uuid === event.uuid);
+    if (idx >= 0) {
+      const next = [...prev];
+      next[idx] = event;
+      return next;
+    }
+    return [...prev, event];
   }
   if (id && seenIds.has(id)) return prev;
   if (id) seenIds.add(id);

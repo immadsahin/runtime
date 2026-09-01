@@ -130,12 +130,65 @@ function MessageRow({ message }: { message: ConversationMessage }) {
       </div>
     );
   }
+  // Conductor-style: assistant prose is the surface; thinking + tool activity
+  // collapse into one expandable summary per run, so the timeline reads as a
+  // conversation, not a tool log.
+  const segments = groupContent(message.content);
   return (
     <div className="min-w-0 space-y-2">
-      {message.content.map((block, i) => (
-        <BlockRow key={i} block={block} />
-      ))}
+      {segments.map((seg, i) =>
+        seg.kind === "text" ? (
+          <Markdown key={i}>{seg.text}</Markdown>
+        ) : (
+          <ToolActivity key={i} blocks={seg.blocks} />
+        ),
+      )}
     </div>
+  );
+}
+
+type Segment =
+  | { kind: "text"; text: string }
+  | { kind: "tools"; blocks: ContentBlock[] };
+
+/** Split a message's blocks into prose runs and collapsible tool-activity runs
+ *  (consecutive thinking / tool_use / tool_result blocks). */
+function groupContent(blocks: ContentBlock[]): Segment[] {
+  const segments: Segment[] = [];
+  for (const block of blocks) {
+    if (block.type === "text") {
+      segments.push({ kind: "text", text: block.text });
+      continue;
+    }
+    const last = segments[segments.length - 1];
+    if (last && last.kind === "tools") last.blocks.push(block);
+    else segments.push({ kind: "tools", blocks: [block] });
+  }
+  return segments;
+}
+
+/** One collapsed "› N tool calls" summary; expands to the individual calls. */
+function ToolActivity({ blocks }: { blocks: ContentBlock[] }) {
+  const toolCount = blocks.filter((b) => b.type === "tool_use").length;
+  const hasThinking = blocks.some((b) => b.type === "thinking");
+  const parts: string[] = [];
+  if (toolCount > 0) parts.push(`${toolCount} tool call${toolCount === 1 ? "" : "s"}`);
+  if (hasThinking) parts.push("thinking");
+  const label = parts.join(" · ") || "details";
+
+  return (
+    <details className="group rounded-md">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-[12px] text-neutral-400 hover:text-neutral-600">
+        <ChevronRight className="size-3 shrink-0 transition-transform group-open:rotate-90" />
+        <Wrench className="size-3.5 shrink-0" />
+        <span>{label}</span>
+      </summary>
+      <div className="mt-1 ml-[18px] space-y-1 border-l border-neutral-100 pl-3">
+        {blocks.map((block, i) => (
+          <BlockRow key={i} block={block} />
+        ))}
+      </div>
+    </details>
   );
 }
 
