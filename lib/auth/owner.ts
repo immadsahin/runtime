@@ -1,5 +1,6 @@
 import type { User } from "@supabase/supabase-js";
 
+import { DEV_OWNER, devNoSupabase } from "@/lib/dev/fixtures";
 import { optionalEnv } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -47,6 +48,9 @@ export function githubLogin(user: User): string | null {
 
 /** The signed-in owner, or null when signed out or not the allowlisted user. */
 export async function getOwner(): Promise<Owner | null> {
+  // Dev-only: bypass auth entirely so the UI is reachable without Supabase.
+  if (devNoSupabase()) return DEV_OWNER;
+
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
