@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Box, ChevronDown, GitBranch, LoaderCircle } from "lucide-react";
+import { Box, ChevronDown, GitBranch } from "lucide-react";
 import { useState, useTransition } from "react";
 
 import { ProjectAvatar } from "@/components/project-avatar";
@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Project } from "@/lib/runtime/types";
+import { cn } from "@/lib/utils";
 
 type CreateResponse = { workspace?: { id: string }; error?: string };
 
@@ -79,19 +80,24 @@ export function NewSessionCreator({
   }
 
   // Provisioning takes tens of seconds; show a staged progress screen instead
-  // of freezing the composer behind a spinner.
-  if (isCreating && selected) {
-    return (
-      <WorkspaceCreating
-        projectName={selected.fullName}
-        branch={selected.defaultBranch}
-      />
-    );
-  }
-
+  // of freezing the composer behind a spinner. It's an overlay — the form stays
+  // mounted (hidden) underneath so a failed create returns the user to a
+  // composer that still holds the prompt they just typed.
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center px-6">
-      <div className="w-full max-w-2xl">
+    <>
+      {isCreating && selected && (
+        <WorkspaceCreating
+          projectName={selected.fullName}
+          branch={selected.defaultBranch}
+        />
+      )}
+      <div
+        className={cn(
+          "flex min-h-screen flex-col items-center justify-center px-6",
+          isCreating && selected && "hidden",
+        )}
+      >
+        <div className="w-full max-w-2xl">
         <p
           aria-hidden
           className="pointer-events-none mb-6 select-none text-center text-[13vw] font-bold leading-none tracking-tight text-neutral-800 sm:text-[96px]"
@@ -110,14 +116,7 @@ export function NewSessionCreator({
           </div>
         ) : (
           <>
-            <div className="relative">
-              {isCreating && (
-                <div className="absolute inset-0 z-10 grid place-items-center rounded-[14px] bg-background/60">
-                  <LoaderCircle className="text-muted-foreground size-5 animate-spin" />
-                </div>
-              )}
-              <SessionComposer onSend={create} canSend={!isCreating} />
-            </div>
+            <SessionComposer onSend={create} canSend={!isCreating} />
 
             <div className="mt-5 flex items-center justify-center gap-2.5 text-[15px]">
               <DropdownMenu>
@@ -168,7 +167,8 @@ export function NewSessionCreator({
             )}
           </>
         )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
