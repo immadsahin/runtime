@@ -28,11 +28,24 @@ export default async function WorkspacePage({
   if (!workspace) notFound();
   const project = await getProject(workspace.projectId);
   if (!project) notFound();
-  const [pullRequest, allWorkspaces, allProjects] = await Promise.all([
+  // The sidebar list is auxiliary: a failed repositories/workspaces load must
+  // not take down the workspace itself, which renders fine without the rail.
+  const [pullRequest, allWorkspaces, listedProjects] = await Promise.all([
     getWorkspacePullRequest(workspace.id),
-    listWorkspaces(),
-    listProjects(),
+    listWorkspaces().catch((error) => {
+      console.error("Could not load workspaces", error);
+      return [];
+    }),
+    listProjects().catch((error) => {
+      console.error("Could not load repositories", error);
+      return [];
+    }),
   ]);
+  // `listProjects` hides hidden repos, but this workspace's project is openable
+  // regardless — merge it in so the current workspace never drops from the nav.
+  const allProjects = listedProjects.some((p) => p.id === project.id)
+    ? listedProjects
+    : [project, ...listedProjects];
 
   return (
     <AppShell immersive>

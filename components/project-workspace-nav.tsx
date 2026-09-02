@@ -4,6 +4,7 @@ import Link from "next/link";
 import { GitBranch, Plus } from "lucide-react";
 
 import { ProjectAvatar } from "@/components/project-avatar";
+import { buildNavGroups } from "@/lib/nav/workspace-nav-groups";
 import type { Project, Workspace } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
@@ -22,24 +23,7 @@ export function ProjectWorkspaceNav({
   workspaces: Workspace[];
   activeWorkspaceId?: string;
 }) {
-  const byProject = new Map<string, Workspace[]>();
-  for (const w of workspaces) {
-    const list = byProject.get(w.projectId) ?? [];
-    list.push(w);
-    byProject.set(w.projectId, list);
-  }
-
-  const recency = (w?: Workspace) => w?.lastActiveAt ?? w?.createdAt ?? "";
-  const groups = projects
-    .filter((p) => byProject.has(p.id))
-    .map((p) => ({
-      project: p,
-      items: byProject
-        .get(p.id)!
-        .slice()
-        .sort((a, b) => recency(b).localeCompare(recency(a))),
-    }))
-    .sort((a, b) => recency(b.items[0]).localeCompare(recency(a.items[0])));
+  const groups = buildNavGroups(projects, workspaces);
 
   return (
     <nav className="studio-nav" aria-label="Workspaces">
