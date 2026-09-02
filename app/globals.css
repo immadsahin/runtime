@@ -153,6 +153,8 @@
 .studio-nav-project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-text); font-size: 13px; font-weight: 500; }
 .studio-nav-add { display: grid; place-items: center; width: 20px; height: 20px; flex: 0 0 auto; border-radius: 5px; color: var(--studio-dim); opacity: 0; transition: opacity .12s ease, color .12s ease, background .12s ease; }
 .studio-nav-project:hover .studio-nav-add { opacity: 1; }
+/* Keyboard users can't hover: reveal the add link and show a focus ring on tab. */
+.studio-nav-add:focus-visible { opacity: 1; color: var(--studio-text); background: var(--studio-selected); outline: 2px solid var(--ring); outline-offset: 1px; }
 .studio-nav-add:hover { color: var(--studio-text); background: var(--studio-selected); }
 .studio-nav-add svg { width: 14px; }
 .studio-nav-item { display: flex; align-items: center; gap: 7px; margin-left: 11px; padding: 5px 8px; border-radius: 7px; color: var(--studio-muted); text-decoration: none; }
