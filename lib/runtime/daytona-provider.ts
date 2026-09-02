@@ -44,16 +44,67 @@ let launchSeq = 0;
 
 /**
  * Read the jcode subscription credential the control plane injects into each
- * box. Defaults to the operator's ~/.jcode (where `jcode login` stored it);
- * override with JCODE_AUTH_DIR. Throws a clear error if absent.
+ * box.
+ *
+ * Two sources, in priority order:
+ *  1. Inline base64 env vars `JCODE_AUTH_JSON` (+ optional
+ *     `JCODE_AUTH_REFRESH_JSON`) — for a hosted control plane (e.g. Railway)
+ *     that has no `~/.jcode` on disk. Each is the base64 of the corresponding
+ *     jcode file.
+ *  2. The operator's `~/.jcode` directory (where `jcode login` stored it),
+ *     overridable with `JCODE_AUTH_DIR` — the local-dev path.
+ *
+ * Throws a clear error if neither is present.
  */
+/**
+ * Decode a base64 jcode credential from an env var, failing loudly on bad input.
+ *
+ * `Buffer.from(_, "base64")` is lenient: it silently drops invalid characters
+ * and stops at the first padding, so a truncated or corrupted paste decodes to
+ * garbage that we'd upload as `auth.json` — surfacing only much later as an
+ * opaque authentication error on the box. We reject anything that doesn't
+ * round-trip as clean base64, and — since both jcode credential files are JSON —
+ * anything that doesn't decode to parseable JSON. Whitespace/newlines in the env
+ * value are tolerated (a wrapped base64 paste is still valid).
+ */
+export function decodeBase64Credential(name: string, value: string): Buffer {
+  const normalized = value.replace(/\s+/g, "");
+  const decoded = Buffer.from(normalized, "base64");
+  if (decoded.toString("base64") !== normalized) {
+    throw new Error(
+      `${name} is not valid base64. Re-encode the file with \`base64 < <file>\`.`,
+    );
+  }
+  try {
+    JSON.parse(decoded.toString("utf8"));
+  } catch {
+    throw new Error(
+      `${name} did not decode to valid JSON — the base64 is likely truncated or ` +
+        `not the credential file.`,
+    );
+  }
+  return decoded;
+}
+
 function readJcodeCreds(): { authJson: Buffer; refreshJson?: Buffer } {
+  const inlineAuth = optionalEnv("JCODE_AUTH_JSON");
+  if (inlineAuth) {
+    const inlineRefresh = optionalEnv("JCODE_AUTH_REFRESH_JSON");
+    return {
+      authJson: decodeBase64Credential("JCODE_AUTH_JSON", inlineAuth),
+      refreshJson: inlineRefresh
+        ? decodeBase64Credential("JCODE_AUTH_REFRESH_JSON", inlineRefresh)
+        : undefined,
+    };
+  }
+
   const dir = optionalEnv("JCODE_AUTH_DIR") ?? path.join(os.homedir(), ".jcode");
   const authPath = path.join(dir, "auth.json");
   if (!existsSync(authPath)) {
     throw new Error(
-      `jcode credential not found at ${authPath}. Run \`jcode login --provider claude\` ` +
-        `or set JCODE_AUTH_DIR to the directory holding auth.json.`,
+      `jcode credential not found. Set JCODE_AUTH_JSON (base64 of auth.json) for a ` +
+        `hosted deploy, or run \`jcode login --provider claude\` / set JCODE_AUTH_DIR ` +
+        `to the directory holding auth.json (looked in ${authPath}).`,
     );
   }
   const refreshPath = path.join(dir, "auth-refresh-state.json");

@@ -2,8 +2,54 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { toRuntimeComputer } from "@/lib/db/mappers";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import {
+  DaytonaRuntimeProvider,
+  decodeBase64Credential,
+} from "@/lib/runtime/daytona-provider";
 import type { RuntimeProvider } from "@/lib/runtime/types";
+
+const b64 = (s: string) => Buffer.from(s).toString("base64");
+
+test("decodeBase64Credential decodes valid base64 JSON", () => {
+  const json = JSON.stringify({ token: "abc", refresh: 1 });
+  assert.equal(
+    decodeBase64Credential("JCODE_AUTH_JSON", b64(json)).toString("utf8"),
+    json,
+  );
+});
+
+test("decodeBase64Credential tolerates whitespace and newlines in the value", () => {
+  const json = JSON.stringify({ a: 1 });
+  const encoded = b64(json);
+  const wrapped = `  ${encoded.slice(0, 4)}\n${encoded.slice(4)}\n`;
+  assert.equal(
+    decodeBase64Credential("JCODE_AUTH_JSON", wrapped).toString("utf8"),
+    json,
+  );
+});
+
+test("decodeBase64Credential rejects malformed base64", () => {
+  assert.throws(
+    () => decodeBase64Credential("JCODE_AUTH_JSON", "not*valid*base64!!"),
+    /JCODE_AUTH_JSON is not valid base64/,
+  );
+});
+
+test("decodeBase64Credential rejects valid base64 that is not JSON", () => {
+  assert.throws(
+    () => decodeBase64Credential("JCODE_AUTH_JSON", b64("plain text, not json")),
+    /did not decode to valid JSON/,
+  );
+});
+
+test("decodeBase64Credential rejects a truncated credential paste", () => {
+  const full = b64(JSON.stringify({ token: "abcdefghijklmnopqrstuvwxyz" }));
+  // Chop the base64 mid-stream: decodes to partial bytes → invalid JSON (or
+  // non-round-tripping base64). Either way it must not silently return garbage.
+  assert.throws(() =>
+    decodeBase64Credential("JCODE_AUTH_JSON", full.slice(0, full.length - 6)),
+  );
+});
 
 const NOT_WIRED = /not on the Daytona provider/;
 
