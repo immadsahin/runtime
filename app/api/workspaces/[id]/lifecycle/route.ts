@@ -27,7 +27,8 @@ import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/
 export const dynamic = "force-dynamic";
 
 // resume/restore ensure a Runtime Computer (provision + agent boot, ~15s+), and
-// archive/restore move snapshot artifacts — all beyond Vercel's 10s Hobby cap.
+// archive/restore move snapshot artifacts; keep the same 60s cap as provisioning
+// (serverless hosts only; a no-op on a long-running server like Railway).
 export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ id: string }> };
