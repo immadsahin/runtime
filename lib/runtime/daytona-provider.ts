@@ -56,13 +56,45 @@ let launchSeq = 0;
  *
  * Throws a clear error if neither is present.
  */
+/**
+ * Decode a base64 jcode credential from an env var, failing loudly on bad input.
+ *
+ * `Buffer.from(_, "base64")` is lenient: it silently drops invalid characters
+ * and stops at the first padding, so a truncated or corrupted paste decodes to
+ * garbage that we'd upload as `auth.json` — surfacing only much later as an
+ * opaque authentication error on the box. We reject anything that doesn't
+ * round-trip as clean base64, and — since both jcode credential files are JSON —
+ * anything that doesn't decode to parseable JSON. Whitespace/newlines in the env
+ * value are tolerated (a wrapped base64 paste is still valid).
+ */
+export function decodeBase64Credential(name: string, value: string): Buffer {
+  const normalized = value.replace(/\s+/g, "");
+  const decoded = Buffer.from(normalized, "base64");
+  if (decoded.toString("base64") !== normalized) {
+    throw new Error(
+      `${name} is not valid base64. Re-encode the file with \`base64 < <file>\`.`,
+    );
+  }
+  try {
+    JSON.parse(decoded.toString("utf8"));
+  } catch {
+    throw new Error(
+      `${name} did not decode to valid JSON — the base64 is likely truncated or ` +
+        `not the credential file.`,
+    );
+  }
+  return decoded;
+}
+
 function readJcodeCreds(): { authJson: Buffer; refreshJson?: Buffer } {
   const inlineAuth = optionalEnv("JCODE_AUTH_JSON");
   if (inlineAuth) {
     const inlineRefresh = optionalEnv("JCODE_AUTH_REFRESH_JSON");
     return {
-      authJson: Buffer.from(inlineAuth, "base64"),
-      refreshJson: inlineRefresh ? Buffer.from(inlineRefresh, "base64") : undefined,
+      authJson: decodeBase64Credential("JCODE_AUTH_JSON", inlineAuth),
+      refreshJson: inlineRefresh
+        ? decodeBase64Credential("JCODE_AUTH_REFRESH_JSON", inlineRefresh)
+        : undefined,
     };
   }
 
