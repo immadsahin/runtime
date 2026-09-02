@@ -6,6 +6,19 @@ const nextConfig: NextConfig = {
   // the Node runtime rather than bundling them into route handlers.
   serverExternalPackages: ["@daytonaio/sdk", "form-data"],
 
+  // The Daytona provider reads the cross-compiled runtime-agent binary at
+  // request time via `readFile(RUNTIME_AGENT_BINARY_PATH)` (upload-on-provision,
+  // decision 1A). The path is computed at runtime, so Next's file tracer cannot
+  // follow it — without this the binary is missing from the serverless bundle on
+  // Vercel and provisioning throws "Cannot read runtime-agent binary". Force it
+  // into every route that provisions a Runtime Computer (i.e. uploads the agent).
+  // Delete this once the agent is baked into runtime-computer-v2.
+  outputFileTracingIncludes: {
+    "/api/projects/[id]/workspaces": ["./bin/runtime-agent-linux-amd64"],
+    "/api/workspaces/[id]/session": ["./bin/runtime-agent-linux-amd64"],
+    "/api/workspaces/[id]/lifecycle": ["./bin/runtime-agent-linux-amd64"],
+  },
+
   /**
    * Dev-only: allow the sandbox preview tunnel host to request /_next dev
    * resources. Without this, Next.js blocks the cross-origin request and HMR
