@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { isDesktopApp } from "@/lib/is-desktop";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 /** The GitHub "Octocat" mark. Inlined so it does not depend on a lucide icon. */
@@ -33,6 +34,26 @@ export function SignInButton({ next = "/" }: { next?: string }) {
 
     try {
       const supabase = createSupabaseBrowserClient();
+
+      // Desktop shell: GitHub blocks/renders poorly in the embedded webview, so
+      // authorize in the system browser. `skipBrowserRedirect` keeps the PKCE
+      // verifier here in the webview; the OAuth code returns via the
+      // `runtime://auth/callback` deep link, which the shell feeds back to this
+      // app's `/auth/callback` so the exchange (and session cookie) happen here.
+      if (isDesktopApp()) {
+        const redirectTo = `runtime://auth/callback?next=${encodeURIComponent(next)}`;
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider: "github",
+          options: { redirectTo, scopes: "read:user user:email", skipBrowserRedirect: true },
+        });
+        if (error) throw error;
+        // Navigating to the provider URL is intercepted by the shell, which
+        // opens it in the system browser. Keep the spinner: the deep link drives
+        // the rest of the flow.
+        if (data?.url) window.location.assign(data.url);
+        return;
+      }
+
       const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
 
       const { error } = await supabase.auth.signInWithOAuth({
