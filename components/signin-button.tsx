@@ -50,7 +50,12 @@ export function SignInButton({ next = "/" }: { next?: string }) {
 
   return (
     <div className="space-y-2">
-      <Button onClick={signIn} disabled={loading} size="lg" className="w-full">
+      <Button
+        onClick={signIn}
+        disabled={loading}
+        size="lg"
+        className="w-full border-0 bg-neutral-900 text-white hover:bg-neutral-800"
+      >
         {loading ? (
           <Loader2 className="size-4 animate-spin" />
         ) : (

@@ -22,6 +22,11 @@ import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 
 export const dynamic = "force-dynamic";
 
+// Lazy provisioning boots a Daytona box + agent (~15s) plus a repo mirror.
+// maxDuration caps the per-request wall-clock on serverless hosts (a no-op on a
+// long-running server like Railway); 60s covers provisioning with headroom.
+export const maxDuration = 60;
+
 type RouteContext = { params: Promise<{ id: string }> };
 
 function isValidBranchName(branch: string): boolean {

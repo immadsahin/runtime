@@ -2,7 +2,6 @@ import { redirect } from "next/navigation";
 import { Terminal } from "lucide-react";
 
 import { SignInButton } from "@/components/signin-button";
-import { Card, CardContent } from "@/components/ui/card";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { safeRelativePath } from "@/lib/auth/redirect";
 
@@ -39,38 +38,22 @@ export default async function SignInPage({
 
   return (
     <main className="flex min-h-screen items-center justify-center px-6">
-      <div className="w-full max-w-sm space-y-8">
-        <div className="space-y-3 text-center">
-          <div className="inline-flex items-center gap-2 font-mono text-sm">
-            <Terminal className="size-4" />
-            <span className="font-semibold tracking-tight">runtime</span>
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-xl font-semibold tracking-tight">Sign in</h1>
-            <p className="text-muted-foreground text-sm">
-              Personal cloud environment for running Claude Code.
-            </p>
-          </div>
+      <div className="w-full max-w-xs space-y-8">
+        <div className="flex items-center justify-center gap-2 font-mono text-sm">
+          <Terminal className="size-4" />
+          <span className="font-semibold tracking-tight">runtime</span>
         </div>
 
-        <Card>
-          <CardContent className="space-y-4 py-2">
-            {message && (
-              <div
-                role="alert"
-                className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-xs"
-              >
-                {message}
-              </div>
-            )}
-            <SignInButton next={target} />
-          </CardContent>
-        </Card>
+        {message && (
+          <div
+            role="alert"
+            className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-xs"
+          >
+            {message}
+          </div>
+        )}
 
-        <p className="text-muted-foreground text-center text-xs">
-          Runtime is single-user. Only the configured GitHub account can sign
-          in.
-        </p>
+        <SignInButton next={target} />
       </div>
     </main>
   );

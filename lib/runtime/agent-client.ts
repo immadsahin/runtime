@@ -39,6 +39,22 @@ export type WorkspaceIdentity = Omit<RuntimeTokenClaims, "exp">;
 
 type FetchFn = typeof fetch;
 
+/**
+ * Cap every agent round-trip. A remote box behind the Daytona proxy can stall
+ * without ever erroring; the session-attach route awaits `workspaceSummary`, so
+ * an unbounded fetch there would leave the caller (and the composer) hung with
+ * no error to surface. Fail fast instead so callers can degrade or retry.
+ */
+const AGENT_REQUEST_TIMEOUT_MS = 12_000;
+
+/**
+ * Archive/restore do real snapshot I/O on the box — the agent uploads or
+ * downloads the tree + conversation and rebuilds the worktree — which routinely
+ * outruns the 12s cap above. Give those a much longer client deadline so a
+ * valid long-running restore isn't aborted and reported as a failure.
+ */
+const AGENT_LIFECYCLE_TIMEOUT_MS = 180_000;
+
 export class AgentClient {
   private readonly target: AgentTarget;
   private readonly fetchFn: FetchFn;
@@ -66,6 +82,16 @@ export class AgentClient {
     return this.post(`/workspaces/${identity.workspaceId}/stop`, identity);
   }
 
+  /**
+   * Deliver a user prompt to the workspace's agent session (jcode engine). The
+   * reply streams back on the Conversation SSE; this just starts the turn.
+   */
+  sendMessage(identity: WorkspaceIdentity, content: string): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/message`, identity, {
+      content,
+    });
+  }
+
   resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
     return this.post(`/workspaces/${identity.workspaceId}/resume`, identity);
   }
@@ -85,6 +111,7 @@ export class AgentClient {
       `/workspaces/${identity.workspaceId}/archive`,
       identity,
       body,
+      AGENT_LIFECYCLE_TIMEOUT_MS,
     );
     return parseManifest(raw);
   }
@@ -100,7 +127,12 @@ export class AgentClient {
     req: RestoreWorkspaceRequest,
   ): Promise<unknown> {
     const body = RestoreWorkspaceRequest.parse(req);
-    return this.post(`/workspaces/${identity.workspaceId}/restore`, identity, body);
+    return this.post(
+      `/workspaces/${identity.workspaceId}/restore`,
+      identity,
+      body,
+      AGENT_LIFECYCLE_TIMEOUT_MS,
+    );
   }
 
   destroyWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
@@ -149,8 +181,9 @@ export class AgentClient {
     path: string,
     identity: WorkspaceIdentity,
     body?: unknown,
+    timeoutMs: number = AGENT_REQUEST_TIMEOUT_MS,
   ): Promise<unknown> {
-    return this.request("POST", path, identity, body);
+    return this.request("POST", path, identity, body, timeoutMs);
   }
 
   private async get(path: string, identity: WorkspaceIdentity): Promise<unknown> {
@@ -162,6 +195,7 @@ export class AgentClient {
     path: string,
     identity: WorkspaceIdentity,
     body?: unknown,
+    timeoutMs: number = AGENT_REQUEST_TIMEOUT_MS,
   ): Promise<unknown> {
     const token = mintRuntimeToken(identity, this.target.secret);
     const response = await this.fetchFn(
@@ -174,6 +208,7 @@ export class AgentClient {
           "x-daytona-preview-token": this.target.daytonaPreviewToken,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
       },
     );
 

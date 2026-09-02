@@ -194,10 +194,12 @@ export function subscribeEvents(
   });
 
   source.addEventListener("error", () => {
-    // EventSource fires 'error' both on transient network blips (before it
-    // auto-reconnects) and on terminal failures. In our reconnect model the
-    // hook handles both by refetching URLs and re-subscribing, so treat any
-    // error as "connection lost" and let the hook decide.
+    // EventSource fires 'error' on transient blips (readyState === CONNECTING,
+    // where it auto-reconnects with Last-Event-ID) AND on terminal failures
+    // (readyState === CLOSED). Only a CLOSED source is a real loss that needs a
+    // fresh /session; tearing down on every transient error spun the shared
+    // attachment in a ~2s refetch loop that starved the conversation stream.
+    if (source.readyState !== EventSource.CLOSED) return;
     dispose();
     options.onClose?.();
   });

@@ -3,20 +3,17 @@
 import Link from "next/link";
 import {
   ArrowLeft,
-  CheckCircle2,
-  ChevronDown,
   FileDiff,
   GitBranch,
   GitPullRequest,
-  Layers3,
   MessageSquarePlus,
   PanelRightClose,
   Plus,
-  TerminalSquare,
   X,
 } from "lucide-react";
 import { useState } from "react";
 
+import { ProjectWorkspaceNav } from "@/components/project-workspace-nav";
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import { WorkspaceLifecycleControls } from "@/components/workspace-lifecycle-controls";
 import { SessionComposer } from "@/components/session-composer";
@@ -28,71 +25,37 @@ import { cn } from "@/lib/utils";
 type SideTab = "diff" | "publish";
 
 export function WorkspaceStudio({
-  project,
   workspace,
-  workspaces,
+  allProjects,
+  allWorkspaces,
   pullRequest,
   initialPrompt,
 }: {
-  project: Project;
   workspace: Workspace;
-  workspaces: Workspace[];
+  allProjects: Project[];
+  allWorkspaces: Workspace[];
   pullRequest: WorkspacePullRequest | null;
   /** First prompt carried in from the new-session screen, sent once connected. */
   initialPrompt?: string;
 }) {
   const [activeTab, setActiveTab] = useState<SideTab>("diff");
   const [rightOpen, setRightOpen] = useState(true);
-  const [showTerminal, setShowTerminal] = useState(false);
+  const [showTerminal] = useState(false);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && workspace.provider === "daytona";
 
   return (
     <div className="studio-shell">
-      <aside className="studio-rail" aria-label="Primary navigation">
-        <Link className="studio-mark" href="/" aria-label="Runtime projects">
-          <TerminalSquare />
-        </Link>
-        <div className="studio-rail-nav">
-          <Link href="/" className="is-active" title="Workspaces"><Layers3 /></Link>
-          <Link href="/new" title="New session"><Plus /></Link>
-        </div>
-        <div className="studio-avatar" aria-label="Account">R</div>
-      </aside>
-
       <aside className="studio-sidebar">
-        <div className="studio-project-head">
+        <div className="studio-sidebar-top">
           <Link href="/" className="studio-back"><ArrowLeft /> Home</Link>
-          <p className="studio-eyebrow">PROJECT</p>
-          <h1 title={project.fullName}>{project.fullName}</h1>
-          <span><GitBranch /> {project.defaultBranch}</span>
+          <Link href="/new" className="studio-back" title="New session"><Plus /> New</Link>
         </div>
-        <Link href="/new" className="studio-new-thread">
-          <Plus /> New session
-        </Link>
-        <div className="studio-thread-label"><span>WORKSPACES</span><span>{workspaces.length}</span></div>
-        <nav className="studio-thread-list" aria-label="Project workspaces">
-          {workspaces.map((item) => {
-            const selected = item.id === workspace.id;
-            return (
-              <Link
-                key={item.id}
-                href={`/workspaces/${item.id}`}
-                className={cn("studio-thread", selected && "is-selected")}
-              >
-                <span className={cn("studio-status", `is-${item.status}`)} />
-                <span className="studio-thread-copy">
-                  <strong>{item.branch}</strong>
-                  <small>{item.status === "ready" ? "ready" : item.status} · worktree</small>
-                </span>
-                {selected && <ChevronDown className="studio-thread-chevron" />}
-              </Link>
-            );
-          })}
-        </nav>
-        <div className="studio-sidebar-foot">
-          <span>isolated from</span><code>{workspace.baseBranch}</code>
-        </div>
+        <ProjectWorkspaceNav
+          projects={allProjects}
+          workspaces={allWorkspaces}
+          activeWorkspaceId={workspace.id}
+        />
       </aside>
 
       <section className="studio-chat">
@@ -105,17 +68,7 @@ export function WorkspaceStudio({
             </div>
           </div>
           <div className="studio-header-actions">
-            {workspace.status === "ready" && <span className="studio-ready"><CheckCircle2 /> Ready</span>}
-            {hasLiveSession && (
-              <button
-                className={cn("studio-icon-button", showTerminal && "is-active")}
-                onClick={() => setShowTerminal((open) => !open)}
-                title={showTerminal ? "Hide terminal" : "Show terminal"}
-              >
-                <TerminalSquare />
-              </button>
-            )}
-            <button className="studio-icon-button" onClick={() => setRightOpen((open) => !open)} title="Toggle inspector">
+            <button className="studio-icon-button" onClick={() => setRightOpen((open) => !open)} title="Toggle changes">
               {rightOpen ? <PanelRightClose /> : <FileDiff />}
             </button>
           </div>

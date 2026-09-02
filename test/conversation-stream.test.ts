@@ -34,6 +34,22 @@ test("appendEvent dedupes message frames by id", () => {
   assert.equal((events[1] as ConversationMessage).uuid, "m2");
 });
 
+test("appendEvent upserts a streaming message by uuid (new id each partial)", () => {
+  const seen = new Set<string>();
+  let events: AgentEvent[] = [];
+  // Same turn streamed: same uuid, growing text, a fresh SSE id each time.
+  events = appendEvent(events, message("m1", "p"), "10", seen);
+  events = appendEvent(events, message("m1", "pon"), "20", seen);
+  events = appendEvent(events, message("m1", "pong"), "30", seen);
+  assert.equal(events.length, 1, "partials collapse to one message");
+  const block = (events[0] as ConversationMessage).content[0];
+  assert.ok(block.type === "text" && block.text === "pong", "shows the latest content");
+  // A different turn appends after, preserving order.
+  events = appendEvent(events, message("m2", "next"), "40", seen);
+  assert.equal(events.length, 2);
+  assert.equal((events[1] as ConversationMessage).uuid, "m2");
+});
+
 test("appendEvent collapses state — only one lives at a time", () => {
   const seen = new Set<string>();
   let events: AgentEvent[] = [];

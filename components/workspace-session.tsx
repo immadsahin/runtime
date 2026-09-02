@@ -24,18 +24,23 @@ export function WorkspaceSession({
 }) {
   const terminalContainer = useRef<HTMLDivElement>(null);
   const attachment = useSessionAttachment(workspaceId);
-  const terminal = useSessionTerminal(attachment, terminalContainer);
+  const terminal = useSessionTerminal(attachment, terminalContainer, showTerminal);
   const conversation = useConversationStream(attachment);
 
-  const error = terminal.error ?? conversation.error;
+  // The jcode engine has no PTY: prompts go over the /message API and the reply
+  // streams back on the Conversation SSE. So input readiness and errors come
+  // from the session attachment + conversation stream, not the terminal (which
+  // stays available only as an optional shell panel).
+  const error = conversation.error ?? attachment.error;
   const refresh = () => attachment.refresh();
-  const canSend = terminal.role === "writer" && terminal.status === "connected";
+  const canSend = attachment.status === "attached";
 
-  // A prompt reaches Claude by writing the line into the PTY (the CLI reads
-  // stdin); the carriage return submits it. The conversation timeline then
-  // reflects the turn through the structured event stream.
   const send = (text: string) => {
-    terminal.sendInput(`${text}\r`);
+    void fetch(`/api/workspaces/${workspaceId}/message`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: text }),
+    });
   };
 
   // Fire the /new first prompt exactly once, as soon as we hold the keyboard.

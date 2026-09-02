@@ -46,6 +46,14 @@ type WsPhase = "idle" | "open" | "closed";
 export function useSessionTerminal(
   attachment: SessionAttachment,
   containerRef: RefObject<HTMLDivElement | null>,
+  /**
+   * Whether to actually hold the PTY WebSocket. The jcode engine has no PTY, so
+   * its `/pty` socket closes on connect; left enabled, `onClose` → `reconnect()`
+   * would spin the shared attachment (and with it the conversation SSE) in a
+   * ~2s refetch loop that never lets the reply stream. Gate the socket on the
+   * terminal actually being visible so a hidden panel never opens it.
+   */
+  enabled = true,
 ): SessionTerminalState {
   const {
     urls,
@@ -111,6 +119,7 @@ export function useSessionTerminal(
   useEffect(() => {
     const url = urls?.ptyUrl;
     const term = terminalRef.current;
+    if (!enabled) return;
     if (!url || !term || attachmentStatus !== "attached" || exitedRef.current) return;
 
     let active = true;
@@ -141,7 +150,7 @@ export function useSessionTerminal(
       handleRef.current = null;
     };
     // attachId changes on every successful refresh -> reattach.
-  }, [attachId, attachmentStatus, reconnect, urls?.ptyUrl]);
+  }, [attachId, attachmentStatus, enabled, reconnect, urls?.ptyUrl]);
 
   // The agent is authoritative for writer election. Avoid accepting keystrokes
   // that it would discard, and make reader mode an actual read-only terminal.

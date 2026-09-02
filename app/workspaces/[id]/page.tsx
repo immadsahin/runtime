@@ -3,7 +3,13 @@ import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { getProject, getWorkspace, getWorkspacePullRequest, listWorkspaces } from "@/lib/db/repositories";
+import {
+  getProject,
+  getWorkspace,
+  getWorkspacePullRequest,
+  listProjects,
+  listWorkspaces,
+} from "@/lib/db/repositories";
 
 export const dynamic = "force-dynamic";
 
@@ -22,17 +28,31 @@ export default async function WorkspacePage({
   if (!workspace) notFound();
   const project = await getProject(workspace.projectId);
   if (!project) notFound();
-  const [pullRequest, workspaces] = await Promise.all([
+  // The sidebar list is auxiliary: a failed repositories/workspaces load must
+  // not take down the workspace itself, which renders fine without the rail.
+  const [pullRequest, allWorkspaces, listedProjects] = await Promise.all([
     getWorkspacePullRequest(workspace.id),
-    listWorkspaces(project.id),
+    listWorkspaces().catch((error) => {
+      console.error("Could not load workspaces", error);
+      return [];
+    }),
+    listProjects().catch((error) => {
+      console.error("Could not load repositories", error);
+      return [];
+    }),
   ]);
+  // `listProjects` hides hidden repos, but this workspace's project is openable
+  // regardless — merge it in so the current workspace never drops from the nav.
+  const allProjects = listedProjects.some((p) => p.id === project.id)
+    ? listedProjects
+    : [project, ...listedProjects];
 
   return (
     <AppShell immersive>
       <WorkspaceStudio
-        project={project}
         workspace={workspace}
-        workspaces={workspaces}
+        allProjects={allProjects}
+        allWorkspaces={allWorkspaces}
         pullRequest={pullRequest}
         initialPrompt={prompt}
       />

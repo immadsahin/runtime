@@ -25,23 +25,23 @@ export function HomeView({
       <aside className="space-y-8">
         <div>
           <div className="flex items-center justify-between">
-            <h2 className="text-[15px] font-semibold text-neutral-700">Projects</h2>
+            <h2 className="text-[15px] font-semibold text-foreground">Projects</h2>
             <Link
               href="/new"
               aria-label="New session"
-              className="-mr-1 rounded-md p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+              className="-mr-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <FolderPlus className="size-4" />
             </Link>
           </div>
           <div className="mt-3 space-y-0.5">
             {activeProjects.length === 0 ? (
-              <p className="px-1 text-sm text-neutral-400">No active workspaces.</p>
+              <p className="px-1 text-sm text-muted-foreground">No active workspaces.</p>
             ) : (
               activeProjects.map((project) => (
                 <div
                   key={project.id}
-                  className="flex items-center gap-2.5 rounded-md px-1 py-1.5 text-[15px] text-neutral-800"
+                  className="flex items-center gap-2.5 rounded-md px-1 py-1.5 text-[15px] text-foreground"
                 >
                   <ProjectAvatar name={project.name} />
                   <span className="truncate">{project.name}</span>
@@ -61,7 +61,7 @@ export function HomeView({
         <div className="mb-5 flex items-center justify-end">
           <Link
             href="/new"
-            className="flex items-center gap-2 text-[15px] text-neutral-600 transition-colors hover:text-neutral-900"
+            className="flex items-center gap-2 text-[15px] text-foreground transition-colors hover:text-foreground"
           >
             <SquarePen className="size-4" /> New session
           </Link>
@@ -70,19 +70,19 @@ export function HomeView({
         <div className="space-y-7">
           {groups.map((group) => (
             <section key={group.label}>
-              <h3 className="mb-2.5 text-[15px] text-neutral-500">{group.label}</h3>
+              <h3 className="mb-2.5 text-[15px] text-muted-foreground">{group.label}</h3>
               <div className="-mx-2 space-y-0.5">
                 {group.items.map((session) => (
                   <Link
                     key={session.id}
                     href={`/workspaces/${session.id}`}
-                    className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-neutral-100"
+                    className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent"
                   >
                     <ProjectAvatar name={session.project} />
-                    <span className="truncate font-semibold text-neutral-900">
+                    <span className="truncate font-semibold text-foreground">
                       {session.title}
                     </span>
-                    <span className="truncate text-neutral-400">
+                    <span className="truncate text-muted-foreground">
                       {session.project}
                     </span>
                   </Link>
@@ -98,7 +98,7 @@ export function HomeView({
 
 function RailItem({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <div className="flex items-center gap-2.5 px-1 py-1.5 text-[15px] text-neutral-500">
+    <div className="flex items-center gap-2.5 px-1 py-1.5 text-[15px] text-muted-foreground">
       {icon}
       {label}
     </div>

@@ -1,4 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { Daytona, type Sandbox } from "@daytonaio/sdk";
@@ -9,6 +11,7 @@ import {
   AGENT_PORT,
   bootAgent,
   type BoxIO,
+  deployJcode,
   ProvisionTimer,
   shellQuote,
   uploadAgent,
@@ -35,6 +38,30 @@ import type {
 
 /** Shared bare mirror on the box; per-workspace worktrees branch off this. */
 export const MIRROR_PATH = "/home/runtime/repo.git";
+
+/** Monotonic suffix so each detached launch gets its own Daytona session. */
+let launchSeq = 0;
+
+/**
+ * Read the jcode subscription credential the control plane injects into each
+ * box. Defaults to the operator's ~/.jcode (where `jcode login` stored it);
+ * override with JCODE_AUTH_DIR. Throws a clear error if absent.
+ */
+function readJcodeCreds(): { authJson: Buffer; refreshJson?: Buffer } {
+  const dir = optionalEnv("JCODE_AUTH_DIR") ?? path.join(os.homedir(), ".jcode");
+  const authPath = path.join(dir, "auth.json");
+  if (!existsSync(authPath)) {
+    throw new Error(
+      `jcode credential not found at ${authPath}. Run \`jcode login --provider claude\` ` +
+        `or set JCODE_AUTH_DIR to the directory holding auth.json.`,
+    );
+  }
+  const refreshPath = path.join(dir, "auth-refresh-state.json");
+  return {
+    authJson: readFileSync(authPath),
+    refreshJson: existsSync(refreshPath) ? readFileSync(refreshPath) : undefined,
+  };
+}
 
 const DEFAULT_SNAPSHOT = "runtime-computer-v1";
 const DEFAULT_BINARY_PATH = ".context/build/runtime-agent-linux-amd64";
@@ -146,10 +173,12 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
         return { stdout: res.result ?? "", exitCode: res.exitCode ?? 0 };
       },
       launch: async (command) => {
-        const sessionId = `runtime-agent-launch-${sandbox.id}`;
-        await sandbox.process.createSession(sessionId).catch(() => {
-          /* session already exists — reuse it */
-        });
+        // A UNIQUE session per launch: the jcode path launches two daemons
+        // (bridge + agent), and reusing one session id makes the second command
+        // collide with the still-running first and silently not execute.
+        launchSeq += 1;
+        const sessionId = `runtime-launch-${sandbox.id}-${launchSeq}`;
+        await sandbox.process.createSession(sessionId).catch(() => {});
         await sandbox.process.executeSessionCommand(sessionId, {
           command,
           runAsync: true,
@@ -185,6 +214,9 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
   async provisionComputer(
     input: ProvisionComputerInput,
   ): Promise<ProvisionedComputer> {
+    if (optionalEnv("RUNTIME_ENGINE") === "jcode") {
+      return this.provisionJcodeComputer(input);
+    }
     const daytona = this.daytona();
     const binary = await this.binary();
     const timer = new ProvisionTimer({
@@ -238,13 +270,101 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
     }
   }
 
+  /**
+   * jcode-engine provisioning: a DEFAULT Daytona image (the frozen
+   * runtime-computer-v1 snapshot isn't in every account), with jcode installed
+   * on-provision, the subscription credential injected, the api-bridge started,
+   * and the agent launched in jcode mode. The recipe (incl. the USER/XDG/pinned
+   * -socket fix) lives in deployJcode; validated on real Daytona.
+   */
+  private async provisionJcodeComputer(
+    input: ProvisionComputerInput,
+  ): Promise<ProvisionedComputer> {
+    const daytona = this.daytona();
+    const binary = await this.binary();
+    const creds = readJcodeCreds();
+    const timer = new ProvisionTimer({
+      onStage: (t) => input.onStage?.(t.stage, t.ms),
+    });
+
+    let sandbox: Sandbox | null = null;
+    try {
+      sandbox = await timer.stage("sandbox_create", () =>
+        daytona.create(
+          {
+            // Always-on retention: never sleep, never delete. The box + its
+            // disk (worktrees, jcode sessions, conversation logs) stay live, so
+            // reconnect/resume just works with no wake path. Cheap for one
+            // project on the current credits; revisit sleep+wake at scale.
+            autoStopInterval: 0,
+            autoDeleteInterval: -1,
+            labels: { "runtime.role": "computer", "runtime.engine": "jcode" },
+          },
+          { timeout: CREATE_TIMEOUT_SECONDS },
+        ),
+      );
+      const box = sandbox;
+      const io = this.boxIO(box);
+      // Default images aren't /home/runtime; the agent + mirror hang off $HOME.
+      const home =
+        ((await io.exec("bash -lc 'echo $HOME'")).stdout || "").trim() || "/home/daytona";
+
+      await timer.stage("agent_boot", () =>
+        deployJcode(io, binary, input.secret, {
+          root: home,
+          authJson: creds.authJson,
+          refreshJson: creds.refreshJson,
+        }),
+      );
+
+      if (input.repoFullName) {
+        await timer.stage("mirror_clone", () =>
+          cloneMirror(this.gitExec(box), {
+            repoFullName: input.repoFullName!,
+            // Agent RUNTIME_AGENT_ROOT=home, so its mirror is $HOME/repo.git.
+            dir: `${home}/repo.git`,
+            token: input.githubToken,
+          }),
+        );
+      }
+
+      const preview = await this.previewUrls(box);
+      return { sandboxId: box.id, ...preview, timings: timer.timings() };
+    } catch (error) {
+      if (sandbox) {
+        await daytona
+          .delete(sandbox)
+          .catch((cleanupError: unknown) =>
+            console.error("Could not delete failed jcode computer", cleanupError),
+          );
+      }
+      throw error;
+    }
+  }
+
   /** Refresh the shared mirror before creating a new worktree. */
   async fetchMirror(sandboxId: string, githubToken?: string): Promise<void> {
     const sandbox = await this.daytona().get(sandboxId);
     await fetchMirror(this.gitExec(sandbox), {
-      repoDir: MIRROR_PATH,
+      repoDir: await this.mirrorDir(sandbox),
       token: githubToken,
     });
+  }
+
+  /**
+   * The bare-mirror path on the box. The Claude snapshot fixes it at
+   * /home/runtime; the jcode path runs on a default image whose home differs
+   * (and whose mirror provisionJcodeComputer cloned to $HOME/repo.git), so
+   * resolve it from the box's actual home.
+   */
+  private async mirrorDir(sandbox: Sandbox): Promise<string> {
+    if (optionalEnv("RUNTIME_ENGINE") === "jcode") {
+      const home =
+        ((await sandbox.process.executeCommand("bash -lc 'echo $HOME'")).result || "").trim() ||
+        "/home/daytona";
+      return `${home}/repo.git`;
+    }
+    return MIRROR_PATH;
   }
 
   /** Git projection for one interactive worktree on the shared computer. */

@@ -38,7 +38,11 @@ type EnvKey =
   | "CODEX_API_KEY"
   // Provider selection
   | "RUNTIME_PROVIDER"
-  | "RUNTIME_BASE_URL";
+  | "RUNTIME_BASE_URL"
+  // Agent engine: "jcode" provisions a jcode box; unset/other = Claude Code.
+  | "RUNTIME_ENGINE"
+  // Where the control plane reads jcode credentials to inject (default ~/.jcode).
+  | "JCODE_AUTH_DIR";
 
 export function optionalEnv(key: EnvKey): string | undefined {
   const value = process.env[key];
