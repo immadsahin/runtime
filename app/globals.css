@@ -112,7 +112,10 @@
   --studio-amber: #d29922;
   display: grid;
   grid-template-columns: 272px minmax(0, 1fr) minmax(350px, 28vw);
-  min-height: 100vh;
+  /* Definite height (not min-height) so the grid tracks are bounded: the chat
+     column's conversation scrolls internally and its composer stays pinned at
+     the bottom, instead of the whole page growing and scrolling. */
+  height: 100vh;
   overflow: hidden;
   color: var(--studio-text);
   background: var(--studio-bg);
