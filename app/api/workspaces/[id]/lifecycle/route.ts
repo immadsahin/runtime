@@ -26,6 +26,10 @@ import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/
 
 export const dynamic = "force-dynamic";
 
+// resume/restore ensure a Runtime Computer (provision + agent boot, ~15s+), and
+// archive/restore move snapshot artifacts — all beyond Vercel's 10s Hobby cap.
+export const maxDuration = 60;
+
 type RouteContext = { params: Promise<{ id: string }> };
 type LifecycleAction = "resume" | "suspend" | "destroy" | "archive" | "restore";
 

@@ -22,6 +22,10 @@ import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 
 export const dynamic = "force-dynamic";
 
+// Lazy provisioning boots a Daytona box + agent (~15s) and mirrors the repo,
+// well past Vercel's 10s Hobby cap. Requires the Pro plan (60s ceiling here).
+export const maxDuration = 60;
+
 type RouteContext = { params: Promise<{ id: string }> };
 
 function isValidBranchName(branch: string): boolean {

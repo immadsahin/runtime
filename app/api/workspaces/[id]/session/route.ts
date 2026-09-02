@@ -14,6 +14,10 @@ import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
 
+// May ensure/boot a Runtime Computer before minting session tokens; give it the
+// same headroom as provisioning (Vercel Pro; 10s Hobby cap would truncate boot).
+export const maxDuration = 60;
+
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
