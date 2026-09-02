@@ -44,16 +44,35 @@ let launchSeq = 0;
 
 /**
  * Read the jcode subscription credential the control plane injects into each
- * box. Defaults to the operator's ~/.jcode (where `jcode login` stored it);
- * override with JCODE_AUTH_DIR. Throws a clear error if absent.
+ * box.
+ *
+ * Two sources, in priority order:
+ *  1. Inline base64 env vars `JCODE_AUTH_JSON` (+ optional
+ *     `JCODE_AUTH_REFRESH_JSON`) — for a hosted control plane (e.g. Railway)
+ *     that has no `~/.jcode` on disk. Each is the base64 of the corresponding
+ *     jcode file.
+ *  2. The operator's `~/.jcode` directory (where `jcode login` stored it),
+ *     overridable with `JCODE_AUTH_DIR` — the local-dev path.
+ *
+ * Throws a clear error if neither is present.
  */
 function readJcodeCreds(): { authJson: Buffer; refreshJson?: Buffer } {
+  const inlineAuth = optionalEnv("JCODE_AUTH_JSON");
+  if (inlineAuth) {
+    const inlineRefresh = optionalEnv("JCODE_AUTH_REFRESH_JSON");
+    return {
+      authJson: Buffer.from(inlineAuth, "base64"),
+      refreshJson: inlineRefresh ? Buffer.from(inlineRefresh, "base64") : undefined,
+    };
+  }
+
   const dir = optionalEnv("JCODE_AUTH_DIR") ?? path.join(os.homedir(), ".jcode");
   const authPath = path.join(dir, "auth.json");
   if (!existsSync(authPath)) {
     throw new Error(
-      `jcode credential not found at ${authPath}. Run \`jcode login --provider claude\` ` +
-        `or set JCODE_AUTH_DIR to the directory holding auth.json.`,
+      `jcode credential not found. Set JCODE_AUTH_JSON (base64 of auth.json) for a ` +
+        `hosted deploy, or run \`jcode login --provider claude\` / set JCODE_AUTH_DIR ` +
+        `to the directory holding auth.json (looked in ${authPath}).`,
     );
   }
   const refreshPath = path.join(dir, "auth-refresh-state.json");
