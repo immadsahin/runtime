@@ -50,3 +50,6 @@ next-env.d.ts
 /runtime-agent/jcode-smoke
 /runtime-agent/runtime-agent
 bun.lock
+
+# Native desktop shell — its own git repo (see runtime-desktop/README.md)
+/runtime-desktop
