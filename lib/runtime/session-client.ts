@@ -155,11 +155,19 @@ export type EventSubscribeOptions = {
 };
 
 /**
- * Subscribe to the Workspace Session's AgentEvent stream. Every incoming
- * frame is validated against the frozen `AgentEvent` union; unknown shapes
- * are surfaced as errors so the Timeline never renders garbage.
+ * Subscribe to the Workspace Session's AgentEvent stream over a WebSocket.
+ *
+ * Every incoming frame is validated against the frozen `AgentEvent` union;
+ * unknown shapes are surfaced as errors so the Timeline never renders garbage.
+ * Resume is by `?lastEventId=<id>` (the JSONL byte offset), so no event is
+ * duplicated or skipped across reconnects. Each frame is `{id, data}`: `id` the
+ * cursor, `data` the AgentEvent. Keepalive is a WS ping (handled by the browser).
+ *
+ * WS — not SSE — because an embedded WKWebView buffers `text/event-stream`
+ * responses (the PTY WS streams live there, but EventSource does not); the agent
+ * serves the same event sequence over `/events-ws`.
  */
-export function subscribeEvents(
+export function subscribeEventsWs(
   eventsUrl: string,
   onEvent: (event: AgentEvent, id: string) => void,
   options: EventSubscribeOptions = {},
@@ -169,46 +177,48 @@ export function subscribeEvents(
       ? appendQuery(eventsUrl, "lastEventId", options.lastEventId)
       : eventsUrl;
 
-  const source = new EventSource(url);
+  const ws = new WebSocket(url);
   let disposed = false;
   let lastId: string | null = options.lastEventId ?? null;
 
-  source.addEventListener("message", (raw) => {
-    const messageEvent = raw as MessageEvent<string>;
-    let parsedJson: unknown;
+  ws.addEventListener("message", (raw) => {
+    let frame: { id?: unknown; data?: unknown };
     try {
-      parsedJson = JSON.parse(messageEvent.data);
+      frame = JSON.parse((raw as MessageEvent<string>).data);
     } catch {
-      options.onError?.(new Error("Malformed SSE frame payload"));
+      options.onError?.(new Error("Malformed events frame payload"));
       return;
     }
-    const parsed = AgentEvent.safeParse(parsedJson);
+    const parsed = AgentEvent.safeParse(frame?.data);
     if (!parsed.success) {
-      options.onError?.(new Error("SSE frame did not match AgentEvent schema"));
+      options.onError?.(new Error("Events frame did not match AgentEvent schema"));
       return;
     }
-    if (messageEvent.lastEventId) {
-      lastId = messageEvent.lastEventId;
-    }
-    onEvent(parsed.data, messageEvent.lastEventId ?? "");
+    const id = typeof frame.id === "string" ? frame.id : "";
+    // State events carry the synthetic id "0"; only real events advance the
+    // resume cursor (mirrors subscribeEvents / the SSE `id:` semantics).
+    if (id && id !== "0") lastId = id;
+    onEvent(parsed.data, id);
   });
 
-  source.addEventListener("error", () => {
-    // EventSource fires 'error' on transient blips (readyState === CONNECTING,
-    // where it auto-reconnects with Last-Event-ID) AND on terminal failures
-    // (readyState === CLOSED). Only a CLOSED source is a real loss that needs a
-    // fresh /session; tearing down on every transient error spun the shared
-    // attachment in a ~2s refetch loop that starved the conversation stream.
-    if (source.readyState !== EventSource.CLOSED) return;
+  // A WS close is always a real loss (unlike EventSource, which silently
+  // auto-reconnects on transient blips): surface it so the hook re-subscribes
+  // with the preserved cursor.
+  ws.addEventListener("close", () => {
+    if (disposed) return;
     dispose();
     options.onClose?.();
+  });
+
+  ws.addEventListener("error", () => {
+    options.onError?.(new Error("Events WebSocket error"));
   });
 
   function dispose(): void {
     if (disposed) return;
     disposed = true;
     try {
-      source.close();
+      ws.close();
     } catch {
       // Already closed.
     }
