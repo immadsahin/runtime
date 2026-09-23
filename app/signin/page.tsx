@@ -41,7 +41,7 @@ export default async function SignInPage({
       <div className="w-full max-w-xs space-y-8">
         <div className="flex items-center justify-center gap-2 font-mono text-sm">
           <Terminal className="size-4" />
-          <span className="font-semibold tracking-tight">runtime</span>
+          <span className="font-semibold tracking-tight">outrunner</span>
         </div>
 
         {message && (
