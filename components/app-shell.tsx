@@ -31,7 +31,7 @@ export async function AppShell({
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-6 px-6">
           <Link href="/" className="flex items-center gap-2 font-mono text-sm">
             <Terminal className="size-4" />
-            <span className="font-semibold tracking-tight">runtime</span>
+            <span className="font-semibold tracking-tight">outrunner</span>
           </Link>
           <nav className="flex items-center gap-1">
             {nav.map(({ href, label, icon: Icon }) => (

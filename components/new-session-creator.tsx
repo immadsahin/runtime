@@ -102,7 +102,7 @@ export function NewSessionCreator({
           aria-hidden
           className="pointer-events-none mb-6 select-none text-center text-[13vw] font-bold leading-none tracking-tight text-neutral-800 sm:text-[96px]"
         >
-          runtime
+          outrunner
         </p>
 
         {projects.length === 0 ? (
