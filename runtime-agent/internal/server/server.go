@@ -69,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
+	mux.HandleFunc("GET /events-ws", s.eventsWS)
 	mux.HandleFunc("GET /workspaces/{id}/summary", s.authed(s.workspaceSummary))
 	return mux
 }
@@ -405,37 +406,55 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	// Synthetic initial `state` event so subscribers know whether the workspace
-	// is running before any conversation event lands. Not resumable — clients
-	// re-observe the state on each connect. Emitted only on fresh connects
-	// (fromOffset == 0) so a resume doesn't re-fire it.
+	s.streamEvents(r.Context(), claims.WorkspaceID, fromOffset, writeSSE, writeHeartbeat)
+}
+
+// streamEvents produces the Conversation event stream for a verified session and
+// delivers it through transport-agnostic callbacks, so the SSE (`/events`) and
+// WebSocket (`/events-ws`) handlers share one implementation.
+//
+//   - `writeEvent(id, payload)` emits one AgentEvent; `id` is the JSONL byte
+//     offset (0 for the non-resumable synthetic state event). Return false to
+//     stop (the transport is gone).
+//   - `heartbeat()` keeps the connection alive on idle. Return false to stop.
+//
+// A synthetic `state` event is emitted first on fresh connects (fromOffset == 0)
+// so subscribers know whether the workspace is running before any conversation
+// event lands; a resume (fromOffset > 0) skips it. Returns when ctx is cancelled
+// (client gone) or a write fails.
+func (s *Server) streamEvents(
+	ctx context.Context,
+	workspaceID string,
+	fromOffset int64,
+	writeEvent func(id int64, payload []byte) bool,
+	heartbeat func() bool,
+) {
 	if fromOffset == 0 {
 		state := "starting"
-		if s.ws.SessionLog(claims.WorkspaceID) != "" {
+		if s.ws.SessionLog(workspaceID) != "" {
 			state = "running"
 		}
 		payload, _ := json.Marshal(protocol.WorkspaceStateChanged{
-			T: "state", WorkspaceID: claims.WorkspaceID, State: state,
+			T: "state", WorkspaceID: workspaceID, State: state,
 		})
-		if !writeSSE(0, payload) {
+		if !writeEvent(0, payload) {
 			return
 		}
 	}
 
-	// Watcher tails the JSONL and delivers events on `out`. Its lifetime is
-	// tied to the HTTP request context — when the browser closes the SSE
-	// connection, r.Context() cancels and the watcher exits.
-	pathFn := func() string { return s.ws.SessionLog(claims.WorkspaceID) }
+	// Watcher tails the JSONL and delivers events on `out`. Its lifetime is tied
+	// to ctx — when the client disconnects, ctx cancels and the watcher exits.
+	pathFn := func() string { return s.ws.SessionLog(workspaceID) }
 	watcher := conversation.New(pathFn, fromOffset)
 	out := make(chan conversation.Event, 64)
-	go watcher.Run(r.Context(), out)
+	go watcher.Run(ctx, out)
 
-	heartbeat := time.NewTicker(sseHeartbeat)
-	defer heartbeat.Stop()
+	ticker := time.NewTicker(sseHeartbeat)
+	defer ticker.Stop()
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case ev := <-out:
 			var payload []byte
@@ -451,15 +470,79 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			if mErr != nil {
 				continue
 			}
-			if !writeSSE(ev.ID, payload) {
+			if !writeEvent(ev.ID, payload) {
 				return
 			}
-		case <-heartbeat.C:
-			if !writeHeartbeat() {
+		case <-ticker.C:
+			if !heartbeat() {
 				return
 			}
 		}
 	}
+}
+
+// eventsWSFrame is one Conversation event over the WebSocket transport: the
+// resumable byte-offset id (as a string, matching the SSE `id:` field) plus the
+// AgentEvent payload. WebSockets stream reliably where an embedded WKWebView
+// buffers SSE, so the browser Conversation stream rides this in the app.
+type eventsWSFrame struct {
+	ID   string          `json:"id"`
+	Data json.RawMessage `json:"data"`
+}
+
+// eventsWS is the WebSocket twin of events: same tokens, same resume protocol
+// (`?lastEventId=`), same event sequence — delivered as JSON frames over a WS so
+// clients whose SSE is buffered (WKWebView) still get real-time updates. The
+// keepalive is a WS ping (browsers pong automatically).
+func (s *Server) eventsWS(w http.ResponseWriter, r *http.Request) {
+	claims, err := auth.Verify(r.URL.Query().Get("token"), s.secret)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
+		return
+	}
+
+	fromOffset := int64(0)
+	if q := r.URL.Query().Get("lastEventId"); q != "" {
+		if v, perr := strconv.ParseInt(q, 10, 64); perr == nil && v > 0 {
+			fromOffset = v
+		}
+	}
+
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	conn.SetReadLimit(maxWSMessageBytes)
+
+	// gorilla/websocket requires exclusive writer access; both event frames and
+	// ping heartbeats write from the same serialized path.
+	var writeMu sync.Mutex
+	writeEvent := func(id int64, payload []byte) bool {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteJSON(eventsWSFrame{ID: strconv.FormatInt(id, 10), Data: json.RawMessage(payload)}) == nil
+	}
+	heartbeat := func() bool {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)) == nil
+	}
+
+	// Cancel the stream as soon as the client closes: a reader goroutine surfaces
+	// the close (and drains client control frames) so streamEvents can exit.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	go func() {
+		for {
+			if _, _, rerr := conn.ReadMessage(); rerr != nil {
+				cancel()
+				return
+			}
+		}
+	}()
+
+	s.streamEvents(ctx, claims.WorkspaceID, fromOffset, writeEvent, heartbeat)
 }
 
 // ---------------------------------------------------------------------------
