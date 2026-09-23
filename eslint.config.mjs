@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // The embedded native desktop shell is its own project (its own repo).
+    "runtime-desktop/**",
   ]),
 ]);
 
