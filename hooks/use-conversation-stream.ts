@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
-import { subscribeEvents } from "@/lib/runtime/session-client";
+import { subscribeEventsWs } from "@/lib/runtime/session-client";
 
 import type { SessionAttachment } from "./use-session-attachment";
 
@@ -71,7 +71,7 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
 
     let active = true;
 
-    const sub = subscribeEvents(
+    const sub = subscribeEventsWs(
       url,
       (event, id) => {
         // Message/usage events are deduplicated by SSE id. State events use a

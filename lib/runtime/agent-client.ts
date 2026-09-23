@@ -163,18 +163,21 @@ export class AgentClient {
   }
 
   /**
-   * The `https://` URL the browser opens for the Conversation event stream
-   * (SSE). Same signed host as {@link ptyUrl}, same short-lived Runtime token,
-   * but plain HTTP because SSE requires a normal fetch — not a WS upgrade.
+   * The `wss://` URL the browser opens for the Conversation event stream. Same
+   * signed host and short-lived Runtime token as {@link ptyUrl}. This rides a
+   * WebSocket (not SSE) because an embedded WKWebView buffers `text/event-stream`
+   * responses — the PTY WS streams live there, but EventSource does not — so the
+   * agent serves the same event sequence over `/events-ws`.
    *
-   * EventSource resends `Last-Event-ID` automatically on transient reconnects;
-   * programmatic reconnects (after token refresh) should append
-   * `?lastEventId=<seq>` — the agent honors either.
+   * Resume is via `?lastEventId=<seq>`; the agent starts its watcher at that
+   * JSONL byte offset so no event is duplicated or skipped across reconnects.
    */
   eventsUrl(identity: WorkspaceIdentity): string {
-    const base = this.target.signedWsBaseUrl.replace(/\/$/, "");
+    const base = this.target.signedWsBaseUrl
+      .replace(/^http/, "ws")
+      .replace(/\/$/, "");
     const token = mintRuntimeToken(identity, this.target.secret);
-    return `${base}/events?token=${encodeURIComponent(token)}`;
+    return `${base}/events-ws?token=${encodeURIComponent(token)}`;
   }
 
   private async post(
