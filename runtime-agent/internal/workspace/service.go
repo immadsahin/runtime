@@ -179,9 +179,31 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
+	s.waitClaudeReady(ctx, name)
 	s.beginSummary(workspaceID, worktree)
 	s.startRecorder(ctx, workspaceID)
 	return name, nil
+}
+
+// waitClaudeReady blocks until Claude's TUI has mounted and can accept a
+// submitted prompt, so the workspace isn't reported ready while input is still
+// silently dropped during startup. It waits for the composer prompt to render
+// and enforces a short floor (the measured input-ready point after launch),
+// capped so a slow or unexpected launch can never wedge Start.
+func (s *Service) waitClaudeReady(ctx context.Context, name string) {
+	const minWait = 2 * time.Second
+	const maxWait = 15 * time.Second
+	launched := time.Now()
+	for {
+		if time.Since(launched) >= maxWait {
+			return
+		}
+		pane, err := s.tmux.CapturePane(ctx, name)
+		if err == nil && strings.Contains(pane, "❯") && time.Since(launched) >= minWait {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 // Resume re-launches Claude with --continue after an exit or box restart.
@@ -204,6 +226,7 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
+	s.waitClaudeReady(ctx, name)
 	s.beginSummary(workspaceID, worktree)
 	s.startRecorder(ctx, workspaceID)
 	return name, nil
