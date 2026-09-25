@@ -1,10 +1,12 @@
 "use client";
 
-import { FileDiff, LoaderCircle, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { FileDiff, GitCommitHorizontal, LoaderCircle, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { DiffView } from "@/components/diff-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { commitMessageError } from "@/lib/runtime/commit";
 import type { ChangedFile } from "@/lib/runtime/types";
 
 const statusVariant: Record<ChangedFile["status"], "default" | "secondary" | "outline" | "destructive"> = {
@@ -28,6 +30,16 @@ export function WorkspaceChanges({
   const [selected, setSelected] = useState<string | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
+
+  // Commit-from-UI (commit only; publish still owns commit+push+PR).
+  const [summary, setSummary] = useState("");
+  const [description, setDescription] = useState("");
+  const [committing, setCommitting] = useState(false);
+  const [commitError, setCommitError] = useState<string | null>(null);
+
+  // Per-file diff cache: reselecting a file must not refetch (perf 1A). Cleared
+  // whenever the changed-file set is reloaded.
+  const diffCache = useRef<Map<string, string>>(new Map());
 
   const fetchChanges = useCallback(
     async (
@@ -63,6 +75,7 @@ export function WorkspaceChanges({
     setMessage(null);
     setSelected(null);
     setDiff(null);
+    diffCache.current.clear();
     try {
       applyResult(await fetchChanges());
     } catch {
@@ -95,6 +108,12 @@ export function WorkspaceChanges({
   const openDiff = useCallback(
     async (path: string) => {
       setSelected(path);
+      const cached = diffCache.current.get(path);
+      if (cached !== undefined) {
+        setDiff(cached);
+        setDiffLoading(false);
+        return;
+      }
       setDiff(null);
       setDiffLoading(true);
       try {
@@ -105,7 +124,14 @@ export function WorkspaceChanges({
           diff?: string;
           error?: string;
         };
-        setDiff(response.ok && typeof result.diff === "string" ? result.diff : result.error ?? "Could not load this diff.");
+        const value =
+          response.ok && typeof result.diff === "string"
+            ? result.diff
+            : result.error ?? "Could not load this diff.";
+        if (response.ok && typeof result.diff === "string") {
+          diffCache.current.set(path, value);
+        }
+        setDiff(value);
       } catch {
         setDiff("Could not reach Runtime. Please try again.");
       } finally {
@@ -115,6 +141,31 @@ export function WorkspaceChanges({
     [workspaceId],
   );
 
+  const commit = useCallback(async () => {
+    setCommitting(true);
+    setCommitError(null);
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/commit`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ summary, description }),
+      });
+      const result = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        setCommitError(result.error ?? "Could not commit.");
+        return;
+      }
+      // Committed: clear the form and refetch the (now-empty) changed set.
+      setSummary("");
+      setDescription("");
+      await refresh();
+    } catch {
+      setCommitError("Could not reach Runtime. Please try again.");
+    } finally {
+      setCommitting(false);
+    }
+  }, [workspaceId, summary, description, refresh]);
+
   if (!active) {
     return (
       <p className="text-muted-foreground text-sm">
@@ -122,6 +173,9 @@ export function WorkspaceChanges({
       </p>
     );
   }
+
+  const hasChanges = !!files && files.length > 0;
+  const canCommit = hasChanges && commitMessageError(summary) === null && !committing;
 
   return (
     <div className="space-y-4">
@@ -153,9 +207,9 @@ export function WorkspaceChanges({
         </p>
       )}
 
-      {files && files.length > 0 && (
+      {hasChanges && (
         <ul className="divide-y rounded-md border">
-          {files.map((file) => (
+          {files!.map((file) => (
             <li key={file.path}>
               <button
                 className="hover:bg-accent/50 flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors"
@@ -181,10 +235,39 @@ export function WorkspaceChanges({
               <LoaderCircle className="size-3.5 animate-spin" /> Loading diff…
             </p>
           ) : (
-            <pre className="bg-muted/50 max-h-96 overflow-auto rounded-md border p-3 font-mono text-xs whitespace-pre-wrap">
-              {diff}
-            </pre>
+            <DiffView diff={diff ?? ""} />
           )}
+        </div>
+      )}
+
+      {hasChanges && (
+        <div className="space-y-2 border-t pt-3">
+          <input
+            aria-label="Commit summary"
+            className="w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus:border-ring"
+            disabled={committing}
+            maxLength={256}
+            onChange={(e) => setSummary(e.target.value)}
+            placeholder="Commit summary"
+            value={summary}
+          />
+          <textarea
+            aria-label="Commit description"
+            className="min-h-16 w-full resize-none rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus:border-ring"
+            disabled={committing}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Description (optional)"
+            value={description}
+          />
+          {commitError && (
+            <p aria-live="polite" className="text-destructive text-xs">
+              {commitError}
+            </p>
+          )}
+          <Button className="w-full" disabled={!canCommit} onClick={() => void commit()} size="sm">
+            {committing ? <LoaderCircle className="animate-spin" /> : <GitCommitHorizontal />}
+            Commit {files!.length} file{files!.length === 1 ? "" : "s"}
+          </Button>
         </div>
       )}
     </div>
