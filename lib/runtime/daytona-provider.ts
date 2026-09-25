@@ -9,13 +9,11 @@ import { optionalEnv, requireEnv } from "@/lib/env";
 import type { AgentTarget } from "@/lib/runtime/agent-client";
 import {
   AGENT_PORT,
-  bootAgent,
   type BoxIO,
+  deployClaude,
   deployJcode,
   ProvisionTimer,
   shellQuote,
-  uploadAgent,
-  waitForAgentHealth,
 } from "@/lib/runtime/daytona/deploy";
 import {
   cloneMirror,
@@ -35,9 +33,6 @@ import type {
   ProvisionTimings,
   RuntimeProvider,
 } from "@/lib/runtime/types";
-
-/** Shared bare mirror on the box; per-workspace worktrees branch off this. */
-export const MIRROR_PATH = "/home/runtime/repo.git";
 
 /** Monotonic suffix so each detached launch gets its own Daytona session. */
 let launchSeq = 0;
@@ -114,7 +109,6 @@ function readJcodeCreds(): { authJson: Buffer; refreshJson?: Buffer } {
   };
 }
 
-const DEFAULT_SNAPSHOT = "runtime-computer-v1";
 const DEFAULT_BINARY_PATH = ".context/build/runtime-agent-linux-amd64";
 /** Longer than a cold snapshot pull; the spike measured ~4s warm. */
 const CREATE_TIMEOUT_SECONDS = 180;
@@ -187,9 +181,6 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
     return this.client;
   }
 
-  private snapshot(): string {
-    return optionalEnv("DAYTONA_SNAPSHOT") ?? DEFAULT_SNAPSHOT;
-  }
 
   /** Read (and cache) the cross-compiled agent uploaded on each provision. */
   private async binary(): Promise<Buffer> {
@@ -268,6 +259,20 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
     if (optionalEnv("RUNTIME_ENGINE") === "jcode") {
       return this.provisionJcodeComputer(input);
     }
+    return this.provisionClaudeComputer(input);
+  }
+
+  /**
+   * Claude Code engine provisioning: a DEFAULT Daytona image (the frozen
+   * runtime-computer-v1 snapshot isn't in every account, and building one needs
+   * a Daytona permission this key may lack). The base image already ships the
+   * `claude` CLI + node; deployClaude only adds tmux and boots the agent in
+   * Claude mode rooted at $HOME, seeding CLAUDE_CODE_OAUTH_TOKEN so each Claude
+   * session authenticates. No jcode, no snapshot, no subscription-refresh trap.
+   */
+  private async provisionClaudeComputer(
+    input: ProvisionComputerInput,
+  ): Promise<ProvisionedComputer> {
     const daytona = this.daytona();
     const binary = await this.binary();
     const timer = new ProvisionTimer({
@@ -279,29 +284,34 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
       sandbox = await timer.stage("sandbox_create", () =>
         daytona.create(
           {
-            snapshot: this.snapshot(),
-            // Always-on for V1: never auto-stop, never auto-delete, no TTL.
+            // Always-on: never auto-stop, never auto-delete. Base image (no
+            // snapshot) — claude + node ship with it.
             autoStopInterval: 0,
             autoDeleteInterval: -1,
-            labels: { "runtime.role": "computer" },
+            labels: { "runtime.role": "computer", "runtime.engine": "claude" },
           },
           { timeout: CREATE_TIMEOUT_SECONDS },
         ),
       );
       const box = sandbox;
       const io = this.boxIO(box);
+      // Default images aren't /home/runtime; the agent + mirror hang off $HOME.
+      const home =
+        ((await io.exec("bash -lc 'echo $HOME'")).stdout || "").trim() || "/home/daytona";
 
-      await timer.stage("agent_upload", () => uploadAgent(io, binary));
       await timer.stage("agent_boot", () =>
-        bootAgent(io, input.secret, input.sessionEnv),
+        deployClaude(io, binary, input.secret, {
+          root: home,
+          sessionEnv: input.sessionEnv,
+        }),
       );
-      await timer.stage("health_check", () => waitForAgentHealth(io));
 
       if (input.repoFullName) {
         await timer.stage("mirror_clone", () =>
           cloneMirror(this.gitExec(box), {
             repoFullName: input.repoFullName!,
-            dir: MIRROR_PATH,
+            // Agent RUNTIME_AGENT_ROOT=home, so its mirror is $HOME/repo.git.
+            dir: `${home}/repo.git`,
             token: input.githubToken,
           }),
         );
@@ -314,7 +324,7 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
         await daytona
           .delete(sandbox)
           .catch((cleanupError: unknown) =>
-            console.error("Could not delete failed Daytona computer", cleanupError),
+            console.error("Could not delete failed Claude computer", cleanupError),
           );
       }
       throw error;
@@ -403,19 +413,15 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
   }
 
   /**
-   * The bare-mirror path on the box. The Claude snapshot fixes it at
-   * /home/runtime; the jcode path runs on a default image whose home differs
-   * (and whose mirror provisionJcodeComputer cloned to $HOME/repo.git), so
-   * resolve it from the box's actual home.
+   * The bare-mirror path on the box. Both engines now run on a default Daytona
+   * image whose home is $HOME (not the frozen /home/runtime snapshot), and both
+   * clone the mirror to $HOME/repo.git — so resolve it from the box's home.
    */
   private async mirrorDir(sandbox: Sandbox): Promise<string> {
-    if (optionalEnv("RUNTIME_ENGINE") === "jcode") {
-      const home =
-        ((await sandbox.process.executeCommand("bash -lc 'echo $HOME'")).result || "").trim() ||
-        "/home/daytona";
-      return `${home}/repo.git`;
-    }
-    return MIRROR_PATH;
+    const home =
+      ((await sandbox.process.executeCommand("bash -lc 'echo $HOME'")).result || "").trim() ||
+      "/home/daytona";
+    return `${home}/repo.git`;
   }
 
   /** Git projection for one interactive worktree on the shared computer. */

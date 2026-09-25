@@ -437,3 +437,95 @@ async function resetJcode(io: BoxIO, root: string): Promise<void> {
     )}`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Claude Code engine deploy
+//
+// The default (non-jcode) engine runs the real `claude` CLI in tmux on the box.
+// Daytona's base image already ships the Claude Code CLI + node, so we only add
+// tmux (+ a couple tools) at provision, then launch the agent in Claude mode (no
+// RUNTIME_ENGINE) rooted at $HOME, seeding its env with the subscription
+// credential so each Claude session authenticates. No frozen snapshot required.
+// ---------------------------------------------------------------------------
+
+/** Install what the Claude-in-tmux engine needs beyond the base image (which
+ *  already has `claude` + node). `apt-get update` first: the base ships a stale
+ *  cache where tmux otherwise reports "no installation candidate". */
+export function claudeInstallScript(): string {
+  return (
+    "sudo apt-get update -q && " +
+    "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tmux git-lfs ripgrep jq"
+  );
+}
+
+/** Pre-seed `~/.claude.json` so the first `claude` launch skips the interactive
+ *  first-run gates (theme picker, bypass-permissions consent, folder-trust
+ *  dialog). Without this, claude sits on the onboarding screen forever inside
+ *  tmux — send-keys lands on the theme menu, no prompt is ever processed, and no
+ *  conversation JSONL is written. We merge (jq) rather than overwrite so the base
+ *  image's existing config (e.g. cached feature flags) is preserved. */
+export function claudeConfigSeedScript(root: string): string {
+  const flags = JSON.stringify({
+    hasCompletedOnboarding: true,
+    theme: "dark",
+    bypassPermissionsModeAccepted: true,
+    hasUsedBypassPermissions: true,
+    hasTrustDialogAccepted: true,
+  });
+  const f = `${root}/.claude.json`;
+  return (
+    `[ -f ${f} ] || echo '{}' > ${f}; ` +
+    `tmp=$(mktemp) && jq ${shellQuote(`. + ${flags}`)} ${f} > "$tmp" && mv "$tmp" ${f}`
+  );
+}
+
+/** Launch the runtime-agent in Claude mode (default engine), detached, rooted at
+ *  the box's home, seeding CLAUDE_CODE_OAUTH_TOKEN (etc.) so Claude auths. */
+export function claudeAgentLaunchScript(
+  root: string,
+  secret: string,
+  env: Record<string, string> = {},
+): string {
+  const extra = Object.entries(env)
+    .map(([key, value]) => `${key}=${shellQuote(value)}`)
+    .join(" ");
+  const assignments =
+    `RUNTIME_AGENT_SECRET=${shellQuote(secret)} RUNTIME_AGENT_ROOT=${root} ` +
+    `PORT=${AGENT_PORT} HOME=${root}` +
+    (extra ? ` ${extra}` : "");
+  return `setsid env ${assignments} ${root}/runtime-agent > ${root}/runtime-agent.log 2>&1 < /dev/null &`;
+}
+
+/** Full Claude deploy on one box: install tmux → upload+unpack the agent →
+ *  launch it in Claude mode → wait for health. Reuses the root-parameterized
+ *  loopback /health wait. */
+export async function deployClaude(
+  io: BoxIO,
+  binary: Buffer,
+  secret: string,
+  opts: WaitOptions & { root: string; sessionEnv?: Record<string, string> },
+): Promise<{ logTail: string }> {
+  const install = await io.exec(`bash -lc ${shellQuote(claudeInstallScript())}`);
+  if (install.exitCode !== 0) {
+    throw new Error(
+      `claude engine install failed (exit ${install.exitCode}): ${install.stdout.trim()}`,
+    );
+  }
+  await io.upload(compressAgent(binary), `${opts.root}/runtime-agent.gz`);
+  const prep = await io.exec(
+    `bash -lc ${shellQuote(
+      `gunzip -f ${opts.root}/runtime-agent.gz && chmod 755 ${opts.root}/runtime-agent`,
+    )}`,
+  );
+  if (prep.exitCode !== 0) {
+    throw new Error(`claude agent prep failed (exit ${prep.exitCode}): ${prep.stdout.trim()}`);
+  }
+  const seed = await io.exec(`bash -lc ${shellQuote(claudeConfigSeedScript(opts.root))}`);
+  if (seed.exitCode !== 0) {
+    throw new Error(
+      `claude config seed failed (exit ${seed.exitCode}): ${seed.stdout.trim()}`,
+    );
+  }
+  await io.launch(`bash -lc ${shellQuote(claudeAgentLaunchScript(opts.root, secret, opts.sessionEnv))}`);
+  return waitForJcodeAgentHealth(io, opts.root, opts);
+}
