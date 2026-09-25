@@ -286,9 +286,15 @@ func (s *Service) Stop(ctx context.Context, workspaceID string) error {
 
 // SendMessage delivers a user prompt to a workspace's agent session. Two engine
 // paths: the jcode engine forwards it to the api-bridge; the default Claude/tmux
-// engine pastes it into the workspace's Claude PTY and submits it (the
-// composer's equivalent of typing in the terminal). Sends are serialized per
-// workspace so concurrent prompts can't interleave into one.
+// engine stages the prompt in Claude's composer and submits it. Sends are
+// serialized per workspace so concurrent prompts can't interleave into one.
+//
+// Delivery is the fiddly part. A freshly-launched Claude accepts the pasted text
+// but silently drops the submitting Enter for a few (variable) seconds while its
+// first-run startup settles, so a single Enter is unreliable. We paste ONCE
+// (never re-paste — that would duplicate the text) and then re-press Enter until
+// Claude records the turn in its conversation log on disk — the deterministic
+// "the prompt landed" signal, rather than scraping the terminal for it.
 func (s *Service) SendMessage(workspaceID, content string) error {
 	lock := s.sendLock(workspaceID)
 	lock.Lock()
@@ -296,7 +302,67 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	if s.jcode != nil {
 		return s.jcode.SendMessage(workspaceID, content)
 	}
-	return s.tmux.SendKeys(context.Background(), sessionName(workspaceID), content)
+	ctx := context.Background()
+	name := sessionName(workspaceID)
+	if err := s.tmux.Paste(ctx, name, content); err != nil {
+		return err
+	}
+	convDir := s.claudeConvDir(workspaceID)
+	before := userTurnCount(convDir)
+	var lastErr error
+	for attempt := 0; attempt < submitAttempts; attempt++ {
+		if err := s.tmux.SubmitEnter(ctx, name); err != nil {
+			lastErr = err
+		}
+		time.Sleep(submitPollInterval)
+		if userTurnCount(convDir) > before {
+			return nil // Claude recorded a new user turn: the prompt was accepted
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	// Best effort: the text is staged in the composer; the browser terminal view
+	// still shows it, and a later Enter (or the user) can submit it.
+	return nil
+}
+
+const (
+	submitAttempts     = 20
+	submitPollInterval = 400 * time.Millisecond
+)
+
+// claudeConvDir is where Claude writes this workspace's conversation JSONL:
+// $HOME/.claude/projects/<worktree-with-slashes-as-dashes>. The agent runs with
+// HOME=Root, so ~/.claude lives under Root; Claude encodes the session cwd (the
+// worktree) into the directory name by replacing every "/" with "-".
+func (s *Service) claudeConvDir(workspaceID string) string {
+	encoded := strings.ReplaceAll(s.worktreePath(workspaceID), "/", "-")
+	return filepath.Join(s.Root, ".claude", "projects", encoded)
+}
+
+// userTurnCount totals the user messages Claude has recorded across the *.jsonl
+// files in dir (0 if it doesn't exist yet). We count user turns specifically
+// rather than total bytes so an in-flight assistant reply — which also grows the
+// log — can't be mistaken for our prompt being accepted. Each conversation entry
+// is one JSON line; a user turn carries "type":"user".
+func userTurnCount(dir string) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		count += strings.Count(string(data), `"type":"user"`)
+	}
+	return count
 }
 
 // sendLock returns the per-workspace mutex that serializes SendMessage, creating
