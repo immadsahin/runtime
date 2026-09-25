@@ -46,6 +46,23 @@ func (m *Manager) KillSession(ctx context.Context, name string) error {
 	return nil
 }
 
+// SendKeys types `text` into the session's active pane and submits it with
+// Enter — how the composer delivers a prompt to Claude on the default engine
+// (jcode uses its own message API instead). `-l` sends the text literally so it
+// is never interpreted as tmux key names; a separate `Enter` submits it.
+func (m *Manager) SendKeys(ctx context.Context, name, text string) error {
+	if !m.HasSession(ctx, name) {
+		return fmt.Errorf("tmux send-keys: no session %s", name)
+	}
+	if out, err := exec.CommandContext(ctx, "tmux", "send-keys", "-t", name, "-l", "--", text).CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux send-keys %s: %v: %s", name, err, out)
+	}
+	if out, err := exec.CommandContext(ctx, "tmux", "send-keys", "-t", name, "Enter").CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux send-keys Enter %s: %v: %s", name, err, out)
+	}
+	return nil
+}
+
 // ListSessions returns the names of all live sessions.
 func (m *Manager) ListSessions(ctx context.Context) ([]string, error) {
 	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()

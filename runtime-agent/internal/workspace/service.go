@@ -257,10 +257,12 @@ func (s *Service) Stop(ctx context.Context, workspaceID string) error {
 // jcode-mode prompt path (the Claude/tmux engine receives prompts by typing into
 // the PTY instead), so it returns an error when the jcode engine is not active.
 func (s *Service) SendMessage(workspaceID, content string) error {
-	if s.jcode == nil {
-		return fmt.Errorf("send message requires the jcode engine")
+	if s.jcode != nil {
+		return s.jcode.SendMessage(workspaceID, content)
 	}
-	return s.jcode.SendMessage(workspaceID, content)
+	// Claude engine: deliver the prompt by typing it into the workspace's Claude
+	// PTY (the composer's equivalent of typing in the terminal), then submitting.
+	return s.tmux.SendKeys(context.Background(), sessionName(workspaceID), content)
 }
 
 // SessionName exposes the tmux session name the PTY handler attaches to.
