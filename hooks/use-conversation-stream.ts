@@ -16,26 +16,32 @@ export type ConversationStreamState = {
   refresh: () => void;
 };
 
-// A single {wsError, wsClosed} slice: reducer keeps effect body free of
-// setState, and both signals update from the same subscribe callbacks.
-type WsStatus = { error: string | null; closed: boolean; connectAttempt: number };
+// Reconnect backoff. Unlike EventSource (which absorbs blips with its own
+// retry), a WS close here triggers a full reconnect — refetch URLs + a fresh
+// token + a new socket. Without a cap that loops forever if the endpoint is
+// down (e.g. an old agent that lacks /events-ws), hammering /session. So back
+// off exponentially and give up after a bounded number of consecutive failures.
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 30_000;
+const MAX_RECONNECT_ATTEMPTS = 6; // ~0.5,1,2,4,8,16s, then stop (~31s total)
+
+// A single {error, closed} slice: reducer keeps effect body free of setState,
+// and both signals update from the same subscribe callbacks.
+type WsStatus = { error: string | null; closed: boolean };
 type WsAction =
   | { kind: "frame-received" }
   | { kind: "closed" }
-  | { kind: "error"; message: string }
-  | { kind: "reset" };
+  | { kind: "error"; message: string };
 
 function wsReducer(state: WsStatus, action: WsAction): WsStatus {
   switch (action.kind) {
     case "frame-received":
       // First frame after connect implicitly means we're open again.
-      return { error: null, closed: false, connectAttempt: state.connectAttempt };
+      return { error: null, closed: false };
     case "closed":
       return { ...state, closed: true };
     case "error":
       return { ...state, error: action.message };
-    case "reset":
-      return { error: null, closed: false, connectAttempt: state.connectAttempt + 1 };
   }
 }
 
@@ -64,6 +70,10 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
   const [ws, dispatch] = useReducerState();
   const lastEventIdRef = useRef<string | null>(null);
   const seenIdsRef = useRef<Set<string>>(new Set());
+  // Consecutive failed reconnects (reset by any received frame). A ref, not
+  // reducer state, so the onClose closure reads the live count, not a stale one.
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const url = urls?.eventsUrl;
@@ -79,6 +89,8 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
         // fresh connects, so we replace the newest state entry instead.
         setEvents((prev) => appendEvent(prev, event, id, seenIdsRef.current));
         if (id && id !== "0") lastEventIdRef.current = id;
+        // A live frame means this connection is healthy: clear the backoff.
+        reconnectAttemptsRef.current = 0;
         dispatch({ kind: "frame-received" });
       },
       {
@@ -86,9 +98,25 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
         onClose: () => {
           if (!active) return;
           dispatch({ kind: "closed" });
-          // The shared attachment coalesces simultaneous terminal and SSE
-          // closes into a single URL refresh.
-          reconnect();
+          const attempt = (reconnectAttemptsRef.current += 1);
+          if (attempt > MAX_RECONNECT_ATTEMPTS) {
+            // Give up rather than loop forever (e.g. endpoint permanently down);
+            // the user can refresh to retry.
+            dispatch({
+              kind: "error",
+              message: "Lost the conversation stream. Refresh to reconnect.",
+            });
+            return;
+          }
+          // Back off, then let the shared attachment refetch URLs (coalescing
+          // simultaneous terminal + events closes into one refresh).
+          const delay = Math.min(
+            RECONNECT_BASE_MS * 2 ** (attempt - 1),
+            RECONNECT_MAX_MS,
+          );
+          reconnectTimerRef.current = setTimeout(() => {
+            if (active) reconnect();
+          }, delay);
         },
         onError: (err) => dispatch({ kind: "error", message: err.message }),
       },
@@ -96,6 +124,7 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
 
     return () => {
       active = false;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       sub.dispose();
     };
   }, [attachId, attachmentStatus, dispatch, reconnect, urls?.eventsUrl]);
@@ -124,7 +153,6 @@ function useReducerState() {
   const [state, setState] = useState<WsStatus>({
     error: null,
     closed: false,
-    connectAttempt: 0,
   });
   const dispatch = useMemo(
     () => (action: WsAction) => setState((s) => wsReducer(s, action)),
