@@ -204,3 +204,24 @@ func TestWatcherWaitsForFileToAppear(t *testing.T) {
 		t.Fatalf("watcher must pick up newly-appearing file; got %d events", len(got))
 	}
 }
+
+func TestDecodeStringUserPromptIsVisible(t *testing.T) {
+	// A typed user prompt is logged with content as a plain string; it must decode
+	// into a single visible text block (the bug: it used to be dropped entirely).
+	line := `{"type":"user","uuid":"x","timestamp":"t","message":{"role":"user","content":"hi there\n"}}`
+	ev, ok := decode([]byte(line))
+	if !ok || ev.Message == nil {
+		t.Fatal("expected a user message event, got none")
+	}
+	if ev.Message.Role != "user" || len(ev.Message.Content) != 1 ||
+		ev.Message.Content[0].Type != "text" || ev.Message.Content[0].Text != "hi there" {
+		t.Fatalf("unexpected decode: %+v", ev.Message)
+	}
+}
+
+func TestDecodeEmptyStringContentIsDropped(t *testing.T) {
+	line := `{"type":"user","uuid":"x","timestamp":"t","message":{"role":"user","content":"   "}}`
+	if _, ok := decode([]byte(line)); ok {
+		t.Fatal("expected an empty-string prompt to be dropped")
+	}
+}

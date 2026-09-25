@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"time"
 
 	"runtime-agent/internal/protocol"
@@ -28,7 +29,7 @@ type rawRecord struct {
 	Timestamp string  `json:"timestamp"`
 	Message   *struct {
 		Role    string                      `json:"role"`
-		Content []protocol.ContentBlock     `json:"content"`
+		Content json.RawMessage             `json:"content"`
 		Usage   *map[string]json.RawMessage `json:"usage"`
 	} `json:"message"`
 }
@@ -160,15 +161,52 @@ func decode(line []byte) (Event, bool) {
 	if rec.Message == nil {
 		return Event{}, false
 	}
+	content, ok := parseContent(rec.Message.Content)
+	if !ok {
+		return Event{}, false // unusable content: not a renderable turn
+	}
 	msg := &protocol.ConversationMessage{
 		T:          "message",
 		UUID:       rec.UUID,
 		ParentUUID: rec.ParentID,
 		Role:       rec.Message.Role,
 		Timestamp:  rec.Timestamp,
-		Content:    rec.Message.Content,
+		Content:    content,
 	}
 	return Event{Message: msg}, true
+}
+
+// parseContent decodes a Claude message's `content`, which is polymorphic: a
+// block array for assistant turns (and tool-result user turns), but a plain
+// string for a typed user prompt (e.g. "hi\n"). The plain-string case was
+// silently dropped before — the whole record failed to unmarshal — so user
+// turns never reached the timeline. Returns ok=false when the record carries no
+// renderable content (missing/empty/malformed), so the caller skips it. The TS
+// replay parser (lib/runtime/replay/conversation.ts) mirrors this exactly.
+func parseContent(raw json.RawMessage) ([]protocol.ContentBlock, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, false
+	}
+	switch trimmed[0] {
+	case '[':
+		var blocks []protocol.ContentBlock
+		if err := json.Unmarshal(trimmed, &blocks); err != nil {
+			return nil, false
+		}
+		return blocks, true
+	case '"':
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return nil, false
+		}
+		if s = strings.TrimSpace(s); s == "" {
+			return nil, false // empty prompt: nothing to render
+		}
+		return []protocol.ContentBlock{{Type: "text", Text: s}}, true
+	default:
+		return nil, false
+	}
 }
 
 // UsageFrom parses a raw Claude usage payload into a TokenUsage event. Exposed

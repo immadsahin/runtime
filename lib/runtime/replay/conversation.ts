@@ -71,11 +71,21 @@ function decodeLine(line: string): AgentEvent | null {
   const message = rec.message;
   if (!isObject(message)) return null;
 
-  // Go decodes message.content into []ContentBlock; a non-array or a non-object
-  // element fails that decode and the whole record is skipped — mirror it rather
-  // than mapping over a non-array (which would throw).
+  // message.content is polymorphic: a block array for assistant turns and
+  // tool-result user turns, but a plain string for a typed user prompt ("hi").
+  // Mirror the Go parser (parseContent): wrap a non-empty string in a single
+  // text block; keep the array path; drop anything else.
   const rawContent = message.content;
-  if (!Array.isArray(rawContent) || !rawContent.every(isObject)) return null;
+  let content: ContentBlock[];
+  if (Array.isArray(rawContent) && rawContent.every(isObject)) {
+    content = rawContent.map(cleanBlock);
+  } else if (typeof rawContent === "string") {
+    const text = rawContent.trim();
+    if (text === "") return null; // empty prompt: nothing to render
+    content = [{ type: "text", text }];
+  } else {
+    return null;
+  }
 
   return {
     t: "message",
@@ -85,6 +95,6 @@ function decodeLine(line: string): AgentEvent | null {
     // unexpected role as "assistant".
     role: (typeof message.role === "string" ? message.role : "") as "user" | "assistant",
     timestamp: typeof rec.timestamp === "string" ? rec.timestamp : "",
-    content: rawContent.map(cleanBlock),
+    content,
   };
 }
