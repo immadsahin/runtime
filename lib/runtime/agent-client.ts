@@ -180,6 +180,18 @@ export class AgentClient {
     return `${base}/events-ws?token=${encodeURIComponent(token)}`;
   }
 
+  /**
+   * The `https://` SSE URL for the still-served `/events` endpoint. The browser
+   * uses the WebSocket {@link eventsUrl}; this exists for non-browser callers
+   * that speak plain SSE (the Daytona verify script), since `fetch()` cannot
+   * open a `wss:` URL.
+   */
+  eventsSseUrl(identity: WorkspaceIdentity): string {
+    const base = this.target.signedWsBaseUrl.replace(/\/$/, "");
+    const token = mintRuntimeToken(identity, this.target.secret);
+    return `${base}/events?token=${encodeURIComponent(token)}`;
+  }
+
   private async post(
     path: string,
     identity: WorkspaceIdentity,

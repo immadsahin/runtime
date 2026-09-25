@@ -89,8 +89,10 @@ async function main(): Promise<void> {
     );
 
     // 4c) SSE /events smoke: initial state frame arrives, headers correct.
+    // The browser uses the WebSocket eventsUrl; the script probes the still-
+    // served SSE endpoint (fetch cannot open the wss:// events URL).
     console.log(`\n[4c] SSE /events (initial state frame) …`);
-    const sse = await probeEvents(agent.eventsUrl(identity));
+    const sse = await probeEvents(agent.eventsSseUrl(identity));
     console.log(`      ${sse}`);
 
     // 4d) Workspace Summary — shape matches the frozen contract.
