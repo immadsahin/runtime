@@ -67,6 +67,16 @@ func Orientation(branch, baseBranch string) string {
 // disk on the box, never logged.
 func SessionEnv(base []string, anthropicToken string) []string {
 	env := append([]string{}, base...)
+	// Suppress Claude's startup network work (auto-update, marketplace install,
+	// non-essential telemetry). On a fresh box that work takes several seconds,
+	// during which the TUI silently drops any prompt submitted into it — the
+	// cause of "I typed but Claude never answered" right after a workspace opens.
+	// It also removes the "Auto-update failed" / "marketplace" noise from the
+	// pane. The essential model API traffic is unaffected.
+	env = append(env,
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"DISABLE_AUTOUPDATER=1",
+	)
 	if anthropicToken != "" {
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+anthropicToken)
 	}

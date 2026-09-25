@@ -82,6 +82,17 @@ func (m *Manager) SendKeys(ctx context.Context, name, text string) error {
 	return nil
 }
 
+// CapturePane returns the current visible contents of the session's active
+// pane. Used to detect when Claude's TUI has finished mounting and is ready to
+// accept a submitted prompt.
+func (m *Manager) CapturePane(ctx context.Context, name string) (string, error) {
+	out, err := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", name, "-p").Output()
+	if err != nil {
+		return "", fmt.Errorf("tmux capture-pane %s: %w", name, err)
+	}
+	return string(out), nil
+}
+
 // ListSessions returns the names of all live sessions.
 func (m *Manager) ListSessions(ctx context.Context) ([]string, error) {
 	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
