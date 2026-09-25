@@ -35,6 +35,13 @@ type Service struct {
 	mu    sync.Mutex
 	facts map[string]workspaceFacts
 
+	// sendLocks serializes prompt delivery per workspace. SendKeys types then
+	// submits in separate tmux commands, so concurrent sends on one session
+	// could interleave into a single garbled prompt; each workspace gets its own
+	// lock (sendMu guards the map itself).
+	sendMu    sync.Mutex
+	sendLocks map[string]*sync.Mutex
+
 	summariesMu sync.Mutex
 	summaries   map[string]*Summary
 
@@ -75,6 +82,7 @@ func NewService(root string) *Service {
 		env:       env,
 		secrets:   secrets,
 		facts:     map[string]workspaceFacts{},
+		sendLocks: map[string]*sync.Mutex{},
 		summaries: map[string]*Summary{},
 		recorders: map[string]*cast.Recorder{},
 	}
@@ -253,16 +261,32 @@ func (s *Service) Stop(ctx context.Context, workspaceID string) error {
 	return s.tmux.KillSession(ctx, sessionName(workspaceID))
 }
 
-// SendMessage delivers a user prompt to a workspace's agent session. This is the
-// jcode-mode prompt path (the Claude/tmux engine receives prompts by typing into
-// the PTY instead), so it returns an error when the jcode engine is not active.
+// SendMessage delivers a user prompt to a workspace's agent session. Two engine
+// paths: the jcode engine forwards it to the api-bridge; the default Claude/tmux
+// engine pastes it into the workspace's Claude PTY and submits it (the
+// composer's equivalent of typing in the terminal). Sends are serialized per
+// workspace so concurrent prompts can't interleave into one.
 func (s *Service) SendMessage(workspaceID, content string) error {
+	lock := s.sendLock(workspaceID)
+	lock.Lock()
+	defer lock.Unlock()
 	if s.jcode != nil {
 		return s.jcode.SendMessage(workspaceID, content)
 	}
-	// Claude engine: deliver the prompt by typing it into the workspace's Claude
-	// PTY (the composer's equivalent of typing in the terminal), then submitting.
 	return s.tmux.SendKeys(context.Background(), sessionName(workspaceID), content)
+}
+
+// sendLock returns the per-workspace mutex that serializes SendMessage, creating
+// it on first use.
+func (s *Service) sendLock(workspaceID string) *sync.Mutex {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	lock, ok := s.sendLocks[workspaceID]
+	if !ok {
+		lock = &sync.Mutex{}
+		s.sendLocks[workspaceID] = lock
+	}
+	return lock
 }
 
 // SessionName exposes the tmux session name the PTY handler attaches to.
