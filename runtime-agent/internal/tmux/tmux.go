@@ -46,16 +46,35 @@ func (m *Manager) KillSession(ctx context.Context, name string) error {
 	return nil
 }
 
-// SendKeys types `text` into the session's active pane and submits it with
-// Enter — how the composer delivers a prompt to Claude on the default engine
-// (jcode uses its own message API instead). `-l` sends the text literally so it
-// is never interpreted as tmux key names; a separate `Enter` submits it.
+// SendKeys delivers `text` as one prompt to the session's active pane and
+// submits it with a single Enter — how the composer drives Claude on the
+// default engine (jcode uses its own message API instead).
+//
+// The text is pasted through a tmux buffer with bracketed paste (paste-buffer
+// -p) rather than typed with `send-keys -l`. A literal send-keys turns every
+// embedded newline into a submit, so a multi-line prompt would fire its first
+// line early and scatter the rest across later prompts. Bracketed paste makes
+// Claude insert those newlines as input; the one trailing Enter then submits
+// the whole thing. Loading via stdin (`load-buffer -`) also sidesteps
+// arg-length and quoting limits and keeps the exact bytes intact.
+//
+// Callers must serialize SendKeys per session: the load/paste/Enter steps are
+// separate tmux commands, so concurrent calls on one pane could interleave
+// (Service.SendMessage holds a per-workspace lock for this reason).
 func (m *Manager) SendKeys(ctx context.Context, name, text string) error {
 	if !m.HasSession(ctx, name) {
 		return fmt.Errorf("tmux send-keys: no session %s", name)
 	}
-	if out, err := exec.CommandContext(ctx, "tmux", "send-keys", "-t", name, "-l", "--", text).CombinedOutput(); err != nil {
-		return fmt.Errorf("tmux send-keys %s: %v: %s", name, err, out)
+	buf := "runtime-send-" + name
+	load := exec.CommandContext(ctx, "tmux", "load-buffer", "-b", buf, "-")
+	load.Stdin = strings.NewReader(text)
+	if out, err := load.CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux load-buffer %s: %v: %s", name, err, out)
+	}
+	// -p: bracketed paste (newlines land as input, not submits). -d: delete the
+	// buffer afterward so buffers don't accumulate across sends.
+	if out, err := exec.CommandContext(ctx, "tmux", "paste-buffer", "-t", name, "-b", buf, "-d", "-p").CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux paste-buffer %s: %v: %s", name, err, out)
 	}
 	if out, err := exec.CommandContext(ctx, "tmux", "send-keys", "-t", name, "Enter").CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys Enter %s: %v: %s", name, err, out)
