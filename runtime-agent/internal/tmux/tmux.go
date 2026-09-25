@@ -46,24 +46,20 @@ func (m *Manager) KillSession(ctx context.Context, name string) error {
 	return nil
 }
 
-// SendKeys delivers `text` as one prompt to the session's active pane and
-// submits it with a single Enter — how the composer drives Claude on the
-// default engine (jcode uses its own message API instead).
+// Paste stages `text` in the session's active pane without submitting it. It
+// goes through a tmux buffer with bracketed paste (paste-buffer -p) rather than
+// `send-keys -l`: a literal send-keys turns every embedded newline into a
+// submit, so a multi-line prompt would fire its first line early and scatter
+// the rest. Bracketed paste makes Claude insert those newlines as input, ready
+// for one Enter to submit the whole thing. Loading via stdin (`load-buffer -`)
+// also sidesteps arg-length and quoting limits and keeps the exact bytes intact.
 //
-// The text is pasted through a tmux buffer with bracketed paste (paste-buffer
-// -p) rather than typed with `send-keys -l`. A literal send-keys turns every
-// embedded newline into a submit, so a multi-line prompt would fire its first
-// line early and scatter the rest across later prompts. Bracketed paste makes
-// Claude insert those newlines as input; the one trailing Enter then submits
-// the whole thing. Loading via stdin (`load-buffer -`) also sidesteps
-// arg-length and quoting limits and keeps the exact bytes intact.
-//
-// Callers must serialize SendKeys per session: the load/paste/Enter steps are
-// separate tmux commands, so concurrent calls on one pane could interleave
-// (Service.SendMessage holds a per-workspace lock for this reason).
-func (m *Manager) SendKeys(ctx context.Context, name, text string) error {
+// Submit is a separate step (SubmitEnter) because a just-launched Claude accepts
+// the pasted text but silently drops the Enter for a few seconds during startup;
+// the caller re-submits the already-staged text rather than re-pasting it.
+func (m *Manager) Paste(ctx context.Context, name, text string) error {
 	if !m.HasSession(ctx, name) {
-		return fmt.Errorf("tmux send-keys: no session %s", name)
+		return fmt.Errorf("tmux paste: no session %s", name)
 	}
 	buf := "runtime-send-" + name
 	load := exec.CommandContext(ctx, "tmux", "load-buffer", "-b", buf, "-")
@@ -76,6 +72,12 @@ func (m *Manager) SendKeys(ctx context.Context, name, text string) error {
 	if out, err := exec.CommandContext(ctx, "tmux", "paste-buffer", "-t", name, "-b", buf, "-d", "-p").CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux paste-buffer %s: %v: %s", name, err, out)
 	}
+	return nil
+}
+
+// SubmitEnter presses Enter in the session's active pane, submitting whatever is
+// currently staged in Claude's composer.
+func (m *Manager) SubmitEnter(ctx context.Context, name string) error {
 	if out, err := exec.CommandContext(ctx, "tmux", "send-keys", "-t", name, "Enter").CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys Enter %s: %v: %s", name, err, out)
 	}

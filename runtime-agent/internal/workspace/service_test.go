@@ -79,3 +79,21 @@ func TestValidSessionIDRejectsPathEscapes(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeConvDirEncodesWorktreePath(t *testing.T) {
+	s := NewService("/home/daytona")
+	// Claude derives the conversation dir from the session cwd (the worktree) by
+	// replacing every "/" with "-". This must match what Claude writes on disk,
+	// since SendMessage polls it to confirm a prompt landed.
+	got := s.claudeConvDir("abc123")
+	want := "/home/daytona/.claude/projects/-home-daytona-workspaces-abc123"
+	if got != want {
+		t.Errorf("claudeConvDir = %q, want %q", got, want)
+	}
+}
+
+func TestUserTurnCountMissingDirIsZero(t *testing.T) {
+	if got := userTurnCount(t.TempDir() + "/does-not-exist"); got != 0 {
+		t.Errorf("userTurnCount(missing) = %d, want 0", got)
+	}
+}
