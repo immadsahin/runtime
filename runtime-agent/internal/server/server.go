@@ -29,9 +29,17 @@ import (
 const (
 	coalesceInterval  = 16 * time.Millisecond
 	coalesceThreshold = 4096
-	// SSE keeps proxies from idling out an in-flight but quiet stream.
+	// SSE keeps proxies from idling out an in-flight but quiet stream; the same
+	// interval is the /events-ws ping period.
 	sseHeartbeat      = 20 * time.Second
 	maxWSMessageBytes = 64 * 1024
+	// events-ws keepalive. The browser auto-pongs our ping; a peer that goes
+	// silent (suspended WKWebView, NAT drop) misses pongs, trips the read
+	// deadline, and the reader unblocks so the handler tears down instead of
+	// leaking the watcher goroutine + channel. pongWait > ping period (~3 missed
+	// pings). A write deadline stops a stalled client blocking the stream loop.
+	eventsWSPongWait  = 60 * time.Second
+	eventsWSWriteWait = 10 * time.Second
 )
 
 type Server struct {
@@ -515,18 +523,28 @@ func (s *Server) eventsWS(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	conn.SetReadLimit(maxWSMessageBytes)
 
+	// Detect a silent peer: require a pong (or any frame) within pongWait, and
+	// extend the deadline every time one arrives. A vanished client stops
+	// ponging, so the reader's ReadMessage below times out and cancels ctx.
+	_ = conn.SetReadDeadline(time.Now().Add(eventsWSPongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(eventsWSPongWait))
+	})
+
 	// gorilla/websocket requires exclusive writer access; both event frames and
-	// ping heartbeats write from the same serialized path.
+	// ping heartbeats write from the same serialized path, each with a write
+	// deadline so a stuck client can't block the stream loop indefinitely.
 	var writeMu sync.Mutex
 	writeEvent := func(id int64, payload []byte) bool {
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		_ = conn.SetWriteDeadline(time.Now().Add(eventsWSWriteWait))
 		return conn.WriteJSON(eventsWSFrame{ID: strconv.FormatInt(id, 10), Data: json.RawMessage(payload)}) == nil
 	}
 	heartbeat := func() bool {
 		writeMu.Lock()
 		defer writeMu.Unlock()
-		return conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)) == nil
+		return conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(eventsWSWriteWait)) == nil
 	}
 
 	// Cancel the stream as soon as the client closes: a reader goroutine surfaces
