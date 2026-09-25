@@ -211,6 +211,8 @@ test("deployAgent runs upload → prep → launch → health in order", async ()
 test("claudeInstallScript updates apt before installing tmux + tooling", () => {
   const s = claudeInstallScript();
   // apt-get update MUST precede install, else tmux is "no installation candidate".
+  // Assert presence first — otherwise a missing update reads as indexOf -1 < N.
+  assert.ok(s.includes("apt-get update"), "runs apt-get update");
   assert.ok(s.indexOf("apt-get update") < s.indexOf("install -y"), "update before install");
   for (const pkg of ["tmux", "git-lfs", "ripgrep", "jq"]) {
     assert.ok(s.includes(pkg), `installs ${pkg}`);
