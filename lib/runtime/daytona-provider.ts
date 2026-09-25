@@ -248,10 +248,11 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
   // --- Runtime Computer lifecycle (the honest Daytona surface) --------------
 
   /**
-   * Provision the always-on box from the frozen snapshot, deploy the agent
-   * (decision 1A: gzip → upload → gunzip → launch → health), and optionally
-   * seed the bare mirror. Every stage is timed. On any failure the half-built
-   * sandbox is deleted so a retry starts clean.
+   * Provision the always-on box and deploy the agent, then optionally seed the
+   * bare mirror. Delegates by engine: RUNTIME_ENGINE=jcode takes the jcode path;
+   * otherwise the default Claude engine runs on a base Daytona image
+   * (provisionClaudeComputer) — no frozen snapshot. Each path times its stages
+   * and deletes the half-built sandbox on failure so a retry starts clean.
    */
   async provisionComputer(
     input: ProvisionComputerInput,
