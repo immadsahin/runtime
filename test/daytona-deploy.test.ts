@@ -8,8 +8,12 @@ import {
   agentLaunchScript,
   agentPrepScript,
   bootAgent,
+  claudeAgentLaunchScript,
+  claudeConfigSeedScript,
+  claudeInstallScript,
   compressAgent,
   deployAgent,
+  deployClaude,
   deployJcode,
   injectJcodeCreds,
   installJcode,
@@ -200,6 +204,88 @@ test("deployAgent runs upload → prep → launch → health in order", async ()
   };
   await deployAgent(io, Buffer.from("bin"), "secret", { attempts: 1, sleep: noSleep });
   assert.deepEqual(order.slice(0, 4), ["upload", "prep", "launch", "health"]);
+});
+
+// --- Claude engine deploy --------------------------------------------------
+
+test("claudeInstallScript updates apt before installing tmux + tooling", () => {
+  const s = claudeInstallScript();
+  // apt-get update MUST precede install, else tmux is "no installation candidate".
+  assert.ok(s.indexOf("apt-get update") < s.indexOf("install -y"), "update before install");
+  for (const pkg of ["tmux", "git-lfs", "ripgrep", "jq"]) {
+    assert.ok(s.includes(pkg), `installs ${pkg}`);
+  }
+});
+
+test("claudeAgentLaunchScript roots the agent + Claude HOME at the box home", () => {
+  const s = claudeAgentLaunchScript("/home/daytona", "s3cr3t", {
+    CLAUDE_CODE_OAUTH_TOKEN: "tok en",
+  });
+  assert.ok(s.includes("RUNTIME_AGENT_SECRET='s3cr3t'"));
+  assert.ok(s.includes("RUNTIME_AGENT_ROOT=/home/daytona"));
+  assert.ok(s.includes("PORT=8080"));
+  // HOME=root so `claude` reads the seeded ~/.claude.json under the same root.
+  assert.ok(s.includes("HOME=/home/daytona"));
+  assert.ok(s.includes("CLAUDE_CODE_OAUTH_TOKEN='tok en'"));
+  // Detached and input-closed so it outlives the launch call.
+  assert.ok(s.trim().endsWith("< /dev/null &"));
+});
+
+test("claudeConfigSeedScript jq-merges the onboarding-skip flags into ~/.claude.json", () => {
+  const s = claudeConfigSeedScript("/home/daytona");
+  assert.ok(s.includes("/home/daytona/.claude.json"), "targets the box's claude config");
+  // Seeds an empty object first so jq has valid input on a fresh box.
+  assert.ok(s.includes("echo '{}'"), "creates the file when absent");
+  // The gates claude blocks on until each is pre-accepted.
+  for (const flag of [
+    "hasCompletedOnboarding",
+    "theme",
+    "bypassPermissionsModeAccepted",
+    "hasTrustDialogAccepted",
+  ]) {
+    assert.ok(s.includes(flag), `seeds ${flag}`);
+  }
+  // A merge (`. + {...}`), not an overwrite, so base-image config survives.
+  assert.ok(s.includes(". +"), "merges rather than overwrites");
+});
+
+test("deployClaude runs install → upload → prep → seed → launch → health in order", async () => {
+  const order: string[] = [];
+  const io: BoxIO = {
+    exec: async (command) => {
+      if (command.includes("apt-get")) order.push("install");
+      if (command.includes("gunzip")) order.push("prep");
+      if (command.includes(".claude.json")) order.push("seed");
+      if (command.includes("curl")) {
+        order.push("health");
+        return { stdout: "200", exitCode: 0 };
+      }
+      return { stdout: "", exitCode: 0 };
+    },
+    launch: async () => {
+      order.push("launch");
+    },
+    upload: async () => {
+      order.push("upload");
+    },
+  };
+  await deployClaude(io, Buffer.from("bin"), "secret", {
+    root: "/home/daytona",
+    attempts: 1,
+    sleep: noSleep,
+  });
+  assert.deepEqual(order, ["install", "upload", "prep", "seed", "launch", "health"]);
+});
+
+test("deployClaude throws (and never launches) when the config seed fails", async () => {
+  const box = fakeBox([
+    { match: (c) => c.includes(".claude.json"), result: { stdout: "jq: parse error", exitCode: 1 } },
+  ]);
+  await assert.rejects(
+    deployClaude(box.io, Buffer.from("bin"), "s", { root: "/home/daytona", attempts: 1, sleep: noSleep }),
+    /claude config seed failed \(exit 1\): jq: parse error/,
+  );
+  assert.equal(box.launchCalls.length, 0);
 });
 
 // --- jcode engine deploy ---------------------------------------------------
