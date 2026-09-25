@@ -92,6 +92,19 @@
           "content": null
         }
       ]
+    },
+    {
+      "t": "message",
+      "uuid": "u7",
+      "parentUuid": null,
+      "role": "assistant",
+      "timestamp": "t7",
+      "content": [
+        {
+          "type": "text",
+          "text": "oops"
+        }
+      ]
     }
   ]
 }
