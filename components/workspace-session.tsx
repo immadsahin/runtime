@@ -92,6 +92,9 @@ export function WorkspaceSession({
     // fire on ready, not a render cascade.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     send(initialPrompt);
+    // Strip ?prompt= from the URL so a refresh doesn't re-send it — the guard
+    // above only covers this page load, not a fresh one.
+    window.history.replaceState(null, "", window.location.pathname);
     // send/terminal are stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canSend, initialPrompt]);
