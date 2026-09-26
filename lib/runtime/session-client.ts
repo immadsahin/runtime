@@ -191,6 +191,12 @@ export function subscribeEventsWs(
     }
     const parsed = AgentEvent.safeParse(frame?.data);
     if (!parsed.success) {
+      // Log the offending frame + Zod issues so an unmodeled shape can be
+      // identified instead of just surfacing a blind toast.
+      console.warn("Events frame did not match AgentEvent schema", {
+        issues: parsed.error.issues,
+        frame: frame?.data,
+      });
       options.onError?.(new Error("Events frame did not match AgentEvent schema"));
       return;
     }
