@@ -21,9 +21,8 @@ export function HomeView({
   groups: SessionGroup[];
 }) {
   return (
-    <div className="h-screen overflow-y-auto">
-    <div className="mx-auto grid max-w-4xl grid-cols-[190px_1fr] gap-14 px-8 pb-24 pt-20">
-      <aside className="space-y-8">
+    <div className="mx-auto grid h-screen max-w-4xl grid-cols-[190px_1fr] gap-14 overflow-hidden px-8">
+      <aside className="min-h-0 space-y-8 overflow-y-auto pb-8 pt-20">
         <div>
           <div className="flex items-center justify-between">
             <h2 className="text-[15px] font-semibold text-foreground">Projects</h2>
@@ -58,7 +57,7 @@ export function HomeView({
         </div>
       </aside>
 
-      <main>
+      <main className="min-h-0 overflow-y-auto pb-24 pt-20">
         <div className="mb-5 flex items-center justify-end">
           <Link
             href="/new"
@@ -93,7 +92,6 @@ export function HomeView({
           ))}
         </div>
       </main>
-    </div>
     </div>
   );
 }
