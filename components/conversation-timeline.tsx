@@ -1,6 +1,6 @@
 "use client";
 
-import { Brain, ChevronRight, Loader2, Terminal, Wrench } from "lucide-react";
+import { Brain, ChevronDown, ChevronRight, Loader2, Sparkles, Terminal, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
@@ -43,28 +43,20 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
         stickToBottom.current =
           el.scrollHeight - el.scrollTop - el.clientHeight < 120;
       }}
-      className="min-h-0 flex-1 overflow-auto bg-background text-[13.5px] leading-relaxed text-foreground"
+      className="min-h-0 flex-1 overflow-auto bg-background text-[0.8125rem] leading-relaxed text-foreground"
     >
-      {events.length === 0 && (
-        <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
-          <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" />
-          Waiting for Claude to speak…
-        </div>
-      )}
-      {buildNodes(events).map((node) => (
-        <div key={node.key} className="px-4 py-2">
-          <div className="mx-auto max-w-3xl">
-            <NodeRow node={node} />
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 pt-16 pb-16">
+        {events.length === 0 && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" />
+            Waiting for Claude to speak…
           </div>
-        </div>
-      ))}
-      {claudeIsWorking(events) && (
-        <div className="px-4 py-2">
-          <div className="mx-auto max-w-3xl">
-            <WorkingIndicator />
-          </div>
-        </div>
-      )}
+        )}
+        {buildNodes(events).map((node) => (
+          <NodeRow key={node.key} node={node} />
+        ))}
+        {claudeIsWorking(events) && <WorkingIndicator />}
+      </div>
     </div>
   );
 }
@@ -191,7 +183,7 @@ function NodeRow({ node }: { node: Node }) {
     case "prompt":
       return (
         <div className="flex justify-end">
-          <div className="max-w-[80%] rounded-2xl bg-muted px-3.5 py-2.5 whitespace-pre-wrap text-foreground">
+          <div className="max-w-[90%] whitespace-pre-wrap break-words rounded-3xl bg-foreground/[0.07] px-4 py-2 text-[0.8125rem] leading-relaxed text-foreground">
             {node.text}
           </div>
         </div>
@@ -203,32 +195,49 @@ function NodeRow({ node }: { node: Node }) {
         </div>
       );
     case "activity":
-      return <ToolActivity blocks={node.blocks} messages={node.messages} />;
+      return <ToolActivity blocks={node.blocks} />;
   }
 }
 
-/** One collapsed summary for a whole working run; expands to every step. */
-function ToolActivity({ blocks, messages }: { blocks: ContentBlock[]; messages: number }) {
-  const toolCount = blocks.filter((b) => b.type === "tool_use").length;
-  const parts: string[] = [];
-  if (toolCount > 0) parts.push(`${toolCount} tool call${toolCount === 1 ? "" : "s"}`);
-  if (messages > 0) parts.push(`${messages} message${messages === 1 ? "" : "s"}`);
-  const label = parts.join(", ") || "thinking";
+/** One collapsed summary for a whole working run (Conductor / open-webui style):
+ *  "Explored · Read a.ts, 2 Bash" or "Thought" for a reasoning-only run; expands
+ *  to every step. */
+function ToolActivity({ blocks }: { blocks: ContentBlock[] }) {
+  const tools = blocks.filter(
+    (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
+  );
+  const verb = tools.length === 0 ? "Thought" : "Explored";
+  const summary = toolSummary(tools);
 
   return (
-    <details className="group rounded-md">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-[12px] text-muted-foreground hover:text-foreground">
-        <ChevronRight className="size-3 shrink-0 transition-transform group-open:rotate-90" />
-        <Wrench className="size-3.5 shrink-0" />
-        <span>{label}</span>
+    <details className="group min-w-0">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-sm text-muted-foreground hover:text-foreground">
+        {tools.length === 0 ? (
+          <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <span className="min-w-0 flex-1 truncate">
+          <span className="text-foreground/80">{verb}</span>
+          {summary && <span className="ml-1 text-muted-foreground">{summary}</span>}
+        </span>
+        <ChevronDown className="size-3 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180" />
       </summary>
-      <div className="mt-1 ml-[18px] space-y-1 border-l border-border pl-3">
+      <div className="mt-1.5 space-y-3 overflow-hidden rounded-2xl border border-border p-3">
         {blocks.map((block, i) => (
           <BlockRow key={i} block={block} />
         ))}
       </div>
     </details>
   );
+}
+
+/** cptr-style run summary: count-grouped tool names, e.g. "Read a.ts, 2 Bash". */
+function toolSummary(tools: Extract<ContentBlock, { type: "tool_use" }>[]): string {
+  if (tools.length === 0) return "";
+  const counts = new Map<string, number>();
+  for (const t of tools) counts.set(t.name, (counts.get(t.name) ?? 0) + 1);
+  return [...counts].map(([name, n]) => (n > 1 ? `${n} ${name}` : name)).join(", ");
 }
 
 function BlockRow({ block }: { block: ContentBlock }) {
