@@ -125,3 +125,36 @@ func TestCommandOmitsFlagWhenNoOrientation(t *testing.T) {
 		t.Errorf("empty orientation must not add the flag: %v", ContinueCommand(""))
 	}
 }
+
+func TestSessionEnvInjectsStartupFlagsAndToken(t *testing.T) {
+	base := []string{"PATH=/usr/bin", "HOME=/home/daytona"}
+	env := SessionEnv(base, "tok-123")
+
+	// Base entries are preserved and come first.
+	if env[0] != "PATH=/usr/bin" || env[1] != "HOME=/home/daytona" {
+		t.Fatalf("base entries not preserved at the front: %v", env[:2])
+	}
+	// Both startup-suppression flags are always present.
+	for _, want := range []string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_AUTOUPDATER=1"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("missing %q in SessionEnv output: %v", want, env)
+		}
+	}
+	// The credential is appended last when non-empty.
+	if last := env[len(env)-1]; last != "CLAUDE_CODE_OAUTH_TOKEN=tok-123" {
+		t.Errorf("token not appended last, got %q", last)
+	}
+}
+
+func TestSessionEnvOmitsTokenWhenEmpty(t *testing.T) {
+	env := SessionEnv(nil, "")
+	for _, e := range env {
+		if strings.HasPrefix(e, "CLAUDE_CODE_OAUTH_TOKEN=") {
+			t.Fatalf("token should be omitted when empty, got %q", e)
+		}
+	}
+	// The flags are still injected.
+	if !slices.Contains(env, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1") {
+		t.Errorf("startup flag missing when token empty: %v", env)
+	}
+}

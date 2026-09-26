@@ -81,10 +81,11 @@ func TestValidSessionIDRejectsPathEscapes(t *testing.T) {
 }
 
 func TestClaudeConvDirEncodesWorktreePath(t *testing.T) {
+	t.Setenv("HOME", "/home/daytona")
 	s := NewService("/home/daytona")
-	// Claude derives the conversation dir from the session cwd (the worktree) by
-	// replacing every "/" with "-". This must match what Claude writes on disk,
-	// since SendMessage polls it to confirm a prompt landed.
+	// Claude derives the conversation dir under $HOME from the session cwd (the
+	// worktree) via claudeSlug ('/' and '.' -> '-'). This must match what Claude
+	// writes on disk, since SendMessage polls it to confirm a prompt landed.
 	got := s.claudeConvDir("abc123")
 	want := "/home/daytona/.claude/projects/-home-daytona-workspaces-abc123"
 	if got != want {
