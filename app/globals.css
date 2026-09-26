@@ -134,6 +134,8 @@
 .studio-avatar { display: grid; width: 31px; height: 31px; margin-top: auto; place-items: center; border: 1px solid var(--studio-line-strong); border-radius: 50%; color: var(--studio-text); background: var(--studio-panel-2); font: 600 12px var(--font-geist-mono); }
 
 .studio-sidebar { display: flex; min-width: 0; flex-direction: column; border-right: 1px solid var(--studio-line); background: var(--studio-panel); }
+.studio-brand { display: flex; align-items: center; gap: 8px; padding: 16px 18px 12px; color: var(--studio-text); font: 600 15px var(--font-geist-mono); letter-spacing: -.01em; }
+.studio-brand svg { width: 17px; height: 17px; color: var(--studio-text); }
 .studio-project-head { padding: 19px 19px 16px; border-bottom: 1px solid var(--studio-line); }
 .studio-back { display: inline-flex; align-items: center; gap: 5px; color: var(--studio-muted); font-size: 11px; text-decoration: none; }
 .studio-back:hover { color: var(--studio-text); }

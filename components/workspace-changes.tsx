@@ -1,11 +1,10 @@
 "use client";
 
-import { ChevronRight, LoaderCircle, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ChevronRight, LoaderCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DiffView } from "@/components/diff-view";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ChangedFile } from "@/lib/runtime/types";
 
@@ -33,11 +32,20 @@ export function WorkspaceChanges({
   baseBranch?: string;
 }) {
   const [files, setFiles] = useState<ChangedFile[] | null>(null);
-  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [diffs, setDiffs] = useState<Record<string, string>>({});
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
   const [openPaths, setOpenPaths] = useState<Set<string>>(new Set());
+
+  // Latest values for the poll to read without stale closures.
+  const filesRef = useRef<ChangedFile[] | null>(null);
+  const openRef = useRef<Set<string>>(openPaths);
+  useEffect(() => {
+    filesRef.current = files;
+  }, [files]);
+  useEffect(() => {
+    openRef.current = openPaths;
+  }, [openPaths]);
 
   const fetchChanges = useCallback(
     async (signal?: AbortSignal): Promise<{ files: ChangedFile[] } | { error: string }> => {
@@ -96,19 +104,6 @@ export function WorkspaceChanges({
     [],
   );
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setMessage(null);
-    try {
-      applyResult(await fetchChanges());
-    } catch {
-      setMessage("Could not reach Runtime. Please try again.");
-      setFiles([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchChanges, applyResult]);
-
   // Auto-load on mount. The first statement awaits, so no state is set
   // synchronously inside the effect body.
   useEffect(() => {
@@ -127,6 +122,30 @@ export function WorkspaceChanges({
     })();
     return () => controller.abort();
   }, [active, fetchChanges, applyResult]);
+
+  // Live refresh: poll the changed-file set while the panel is open so edits
+  // appear without a manual refresh. Preserves the user's expand/collapse choices
+  // and only reloads a diff for an expanded file whose +/- counts changed.
+  const poll = useCallback(async () => {
+    const result = await fetchChanges();
+    if ("error" in result) return; // ignore transient poll errors
+    const prevSig = new Map(
+      (filesRef.current ?? []).map((f) => [f.path, `${f.additions}:${f.deletions}`]),
+    );
+    const present = new Set(result.files.map((f) => f.path));
+    setFiles(result.files);
+    setOpenPaths((o) => new Set([...o].filter((p) => present.has(p))));
+    for (const f of result.files) {
+      if (!openRef.current.has(f.path)) continue;
+      if (prevSig.get(f.path) !== `${f.additions}:${f.deletions}`) void loadDiff(f.path);
+    }
+  }, [fetchChanges, loadDiff]);
+
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => void poll(), 3500);
+    return () => clearInterval(id);
+  }, [active, poll]);
 
   const toggle = (path: string) => {
     setOpenPaths((s) => {
@@ -164,9 +183,6 @@ export function WorkspaceChanges({
           </p>
           {baseBranch && <p className="truncate text-[11px] text-muted-foreground">Compared with {baseBranch}</p>}
         </div>
-        <Button disabled={loading} onClick={() => void refresh()} size="icon" variant="ghost" title="Refresh">
-          {loading ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-        </Button>
       </div>
 
       <div className="studio-changes-scroll">
