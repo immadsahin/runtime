@@ -183,8 +183,12 @@
 .studio-inspector { min-width: 0; border-left: 1px solid var(--studio-line); background: var(--studio-bg); }.studio-inspector-tabs { display:flex;align-items:center;gap:3px;height:60px;padding:0 11px;border-bottom:1px solid var(--studio-line); }.studio-inspector-tab { display:flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid transparent;border-radius:8px;color:var(--studio-muted);background:transparent;font-size:12px;cursor:pointer; }.studio-inspector-tab:hover { color:var(--studio-text); }.studio-inspector-tab.is-active { border-color:transparent;color:var(--studio-text);background:var(--studio-hover); }.studio-inspector-tab svg { width:14px; }.studio-close-inspector { margin-left:auto; }.studio-inspector-content { height:calc(100vh - 60px);overflow:auto;padding:19px; }.studio-inspector-heading { display:flex;justify-content:space-between;align-items:start;margin-bottom:18px; }.studio-inspector-heading p { margin:0;color:var(--studio-text);font-size:13px;font-weight:650; }.studio-inspector-heading span { display:block;margin-top:4px;color:var(--studio-muted);font-size:11px;line-height:1.4; }.studio-inspector-heading > svg { width:17px;color:var(--studio-dim); }
 /* Conductor-style changes: a single scrollable list of files, each an inline
    expandable diff (no separate select-a-file pane). */
-.studio-shell.no-inspector { grid-template-columns: 272px minmax(0, 1fr); }
+/* Scoped to wide screens so it can't out-specify the responsive breakpoints
+   (media queries add no specificity) and crush the chat column on phones. */
+@media (min-width: 1101px) { .studio-shell.no-inspector { grid-template-columns: 272px minmax(0, 1fr); } }
 .studio-inspector-content.is-diff { padding: 0; overflow: hidden; }
+.studio-inspector-label { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; color: var(--studio-text); font-size: 12px; }
+.studio-inspector-label svg { width: 14px; }
 .studio-changes { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .studio-changes-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--studio-line); }
 .studio-changes-scroll { flex: 1; min-height: 0; overflow-y: auto; }

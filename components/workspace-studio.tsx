@@ -102,7 +102,7 @@ export function WorkspaceStudio({
       {rightOpen && (
         <aside className="studio-inspector">
           <div className="studio-inspector-tabs" aria-label="Workspace changes">
-            <span className="studio-inspector-tab is-active"><FileDiff /> Changes</span>
+            <span className="studio-inspector-label"><FileDiff /> Changes</span>
             <button className="studio-close-inspector" onClick={() => setRightOpen(false)} title="Close inspector"><X /></button>
           </div>
           <div className="studio-inspector-content is-diff">

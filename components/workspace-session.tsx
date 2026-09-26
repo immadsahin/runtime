@@ -60,7 +60,7 @@ export function WorkspaceSession({
         return [...live, { id: crypto.randomUUID(), text: trimmed, expect }];
       });
     }
-    void fetch(`/api/workspaces/${workspaceId}/message`, {
+    return fetch(`/api/workspaces/${workspaceId}/message`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content: text }),
@@ -91,10 +91,19 @@ export function WorkspaceSession({
     // send() queues an optimistic bubble (setState); this is a one-time guarded
     // fire on ready, not a render cascade.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    send(initialPrompt);
-    // Strip ?prompt= from the URL so a refresh doesn't re-send it — the guard
-    // above only covers this page load, not a fresh one.
-    window.history.replaceState(null, "", window.location.pathname);
+    void send(initialPrompt)
+      .then((res) => {
+        // Strip only after the POST is accepted, so a failed delivery leaves
+        // ?prompt= in place for a refresh to retry. Remove just the prompt param
+        // (preserving any history state), not the whole query string.
+        if (!res.ok) return;
+        const url = new URL(window.location.href);
+        url.searchParams.delete("prompt");
+        window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      })
+      .catch(() => {
+        /* network failure — leave ?prompt= so a refresh can retry */
+      });
     // send/terminal are stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canSend, initialPrompt]);

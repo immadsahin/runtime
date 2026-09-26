@@ -21,7 +21,7 @@ export function HomeView({
   groups: SessionGroup[];
 }) {
   return (
-    <div className="mx-auto grid h-screen max-w-4xl grid-cols-[190px_1fr] gap-14 overflow-hidden px-8">
+    <div className="mx-auto grid h-dvh max-w-4xl grid-cols-[190px_1fr] gap-14 overflow-hidden px-8">
       <aside className="min-h-0 space-y-8 overflow-y-auto pb-8 pt-20">
         <div>
           <div className="flex items-center justify-between">

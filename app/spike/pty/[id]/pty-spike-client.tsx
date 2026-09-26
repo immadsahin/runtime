@@ -71,7 +71,7 @@ export function PtySpikeClient({
       )}
       <div className="flex min-h-0 flex-1">
         <div ref={terminalContainer} className="min-h-0 flex-1" />
-        <div className="w-[520px] min-w-[420px] border-l border-neutral-800">
+        <div className="flex w-[520px] min-w-[420px] flex-col border-l border-neutral-800">
           <ConversationTimeline events={conversation.events} />
         </div>
       </div>
