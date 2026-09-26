@@ -189,7 +189,7 @@
 .studio-convo-panel { display:flex; flex:1; min-height:0; flex-direction:column; }
 .studio-convo-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 16px; border-bottom:1px solid var(--studio-line); }
 .studio-convo-title { display:inline-flex; align-items:center; gap:6px; color:var(--studio-text); font-size:12px; font-weight:650; }.studio-convo-title svg { width:14px; color:var(--studio-muted); }
-.studio-convo-body { flex:1; min-height:0; }
+.studio-convo-body { flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 
 /* The live PTY terminal panel — deliberately darkest. */
 .studio-term-panel { display:flex; height:230px; flex-direction:column; border-top:1px solid var(--studio-line); background:#080808; }
