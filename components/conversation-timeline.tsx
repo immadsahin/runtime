@@ -51,10 +51,10 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
           Waiting for Claude to speak…
         </div>
       )}
-      {events.map((event, i) => (
-        <div key={event.t === "message" ? event.uuid : `${event.t}-${i}`} className="px-4 py-2">
+      {buildNodes(events).map((node) => (
+        <div key={node.key} className="px-4 py-2">
           <div className="mx-auto max-w-3xl">
-            <EventRow event={event} />
+            <NodeRow node={node} />
           </div>
         </div>
       ))}
@@ -105,13 +105,71 @@ function WorkingIndicator() {
   );
 }
 
-function EventRow({ event }: { event: AgentEvent }) {
-  switch (event.t) {
+/** A rendered row. Tool activity is grouped ACROSS messages (Claude emits each
+ *  tool call as its own message), so a whole working run collapses into one
+ *  summary instead of a wall of "1 tool call" rows. */
+type Node =
+  | { kind: "state"; key: string; state: string }
+  | { kind: "usage"; key: string; event: Extract<AgentEvent, { t: "usage" }> }
+  | { kind: "prompt"; key: string; text: string }
+  | { kind: "prose"; key: string; text: string }
+  | { kind: "activity"; key: string; blocks: ContentBlock[]; messages: number };
+
+/** Flatten the event stream into render nodes, coalescing every consecutive
+ *  thinking / tool_use / tool_result block — no matter how many messages they
+ *  span — into a single collapsible activity node. User prompts and assistant
+ *  prose break the run and render on their own. */
+function buildNodes(events: AgentEvent[]): Node[] {
+  const nodes: Node[] = [];
+  let group: { blocks: ContentBlock[]; messages: number } | null = null;
+  const flush = () => {
+    if (group && group.blocks.length) {
+      nodes.push({ kind: "activity", key: `act-${nodes.length}`, blocks: group.blocks, messages: group.messages });
+    }
+    group = null;
+  };
+
+  events.forEach((event, ei) => {
+    if (event.t === "state") {
+      flush();
+      nodes.push({ kind: "state", key: `st-${ei}`, state: event.state });
+      return;
+    }
+    if (event.t === "usage") {
+      flush();
+      nodes.push({ kind: "usage", key: `us-${ei}`, event });
+      return;
+    }
+    let addedToGroup = false;
+    event.content.forEach((block, bi) => {
+      if (block.type === "text") {
+        if (addedToGroup && group) {
+          group.messages += 1;
+          addedToGroup = false;
+        }
+        flush();
+        const kind = event.role === "user" ? "prompt" : "prose";
+        nodes.push({ kind, key: `${event.uuid}-${ei}-${bi}`, text: block.text });
+        return;
+      }
+      if (!group) group = { blocks: [], messages: 0 };
+      group.blocks.push(block);
+      addedToGroup = true;
+    });
+    if (addedToGroup && group) group.messages += 1;
+  });
+
+  flush();
+  return nodes;
+}
+
+function NodeRow({ node }: { node: Node }) {
+  switch (node.kind) {
     case "state":
       return (
         <div className="flex items-center gap-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           <span className="h-px w-4 bg-border" />
-          session {event.state}
+          session {node.state}
         </div>
       );
     case "usage":
@@ -119,81 +177,43 @@ function EventRow({ event }: { event: AgentEvent }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1 font-mono text-[10px] text-muted-foreground">
           <span className="uppercase tracking-wider text-muted-foreground">usage</span>
           <span>
-            in <span className="text-foreground">{formatTokens(event.input_tokens)}</span>
+            in <span className="text-foreground">{formatTokens(node.event.input_tokens)}</span>
           </span>
           <span>
-            out <span className="text-foreground">{formatTokens(event.output_tokens)}</span>
+            out <span className="text-foreground">{formatTokens(node.event.output_tokens)}</span>
           </span>
           <span>
             cache-r{" "}
-            <span className="text-foreground">
-              {formatTokens(event.cache_read_input_tokens)}
-            </span>
+            <span className="text-foreground">{formatTokens(node.event.cache_read_input_tokens)}</span>
           </span>
         </div>
       );
-    case "message":
-      return <MessageRow message={event} />;
-  }
-}
-
-function MessageRow({ message }: { message: ConversationMessage }) {
-  if (message.role === "user") {
-    return (
-      <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl bg-muted px-3.5 py-2.5 text-foreground">
-          {message.content.map((block, i) => (
-            <BlockRow key={i} block={block} />
-          ))}
+    case "prompt":
+      return (
+        <div className="flex justify-end">
+          <div className="max-w-[80%] rounded-2xl bg-muted px-3.5 py-2.5 whitespace-pre-wrap text-foreground">
+            {node.text}
+          </div>
         </div>
-      </div>
-    );
+      );
+    case "prose":
+      return (
+        <div className="min-w-0">
+          <Markdown>{node.text}</Markdown>
+        </div>
+      );
+    case "activity":
+      return <ToolActivity blocks={node.blocks} messages={node.messages} />;
   }
-  // Conductor-style: assistant prose is the surface; thinking + tool activity
-  // collapse into one expandable summary per run, so the timeline reads as a
-  // conversation, not a tool log.
-  const segments = groupContent(message.content);
-  return (
-    <div className="min-w-0 space-y-2">
-      {segments.map((seg, i) =>
-        seg.kind === "text" ? (
-          <Markdown key={i}>{seg.text}</Markdown>
-        ) : (
-          <ToolActivity key={i} blocks={seg.blocks} />
-        ),
-      )}
-    </div>
-  );
 }
 
-type Segment =
-  | { kind: "text"; text: string }
-  | { kind: "tools"; blocks: ContentBlock[] };
-
-/** Split a message's blocks into prose runs and collapsible tool-activity runs
- *  (consecutive thinking / tool_use / tool_result blocks). */
-function groupContent(blocks: ContentBlock[]): Segment[] {
-  const segments: Segment[] = [];
-  for (const block of blocks) {
-    if (block.type === "text") {
-      segments.push({ kind: "text", text: block.text });
-      continue;
-    }
-    const last = segments[segments.length - 1];
-    if (last && last.kind === "tools") last.blocks.push(block);
-    else segments.push({ kind: "tools", blocks: [block] });
-  }
-  return segments;
-}
-
-/** One collapsed "› N tool calls" summary; expands to the individual calls. */
-function ToolActivity({ blocks }: { blocks: ContentBlock[] }) {
+/** One collapsed summary for a whole working run; expands to every step. */
+function ToolActivity({ blocks, messages }: { blocks: ContentBlock[]; messages: number }) {
   const toolCount = blocks.filter((b) => b.type === "tool_use").length;
-  const hasThinking = blocks.some((b) => b.type === "thinking");
   const parts: string[] = [];
   if (toolCount > 0) parts.push(`${toolCount} tool call${toolCount === 1 ? "" : "s"}`);
-  if (hasThinking) parts.push("thinking");
-  const label = parts.join(" · ") || "details";
+  if (messages > 0) parts.push(`${messages} message${messages === 1 ? "" : "s"}`);
+  const label = parts.join(", ") || "thinking";
 
   return (
     <details className="group rounded-md">
