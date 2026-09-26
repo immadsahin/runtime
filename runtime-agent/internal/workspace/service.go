@@ -5,6 +5,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -179,9 +180,11 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
+	// Record from launch (before the readiness wait) so the cast captures Claude's
+	// startup output too.
+	s.startRecorder(ctx, workspaceID)
 	s.waitClaudeReady(ctx, name)
 	s.beginSummary(workspaceID, worktree)
-	s.startRecorder(ctx, workspaceID)
 	return name, nil
 }
 
@@ -189,26 +192,36 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 // submitted prompt, so the workspace isn't reported ready while input is still
 // silently dropped during startup. It waits for the composer prompt to render
 // and enforces a short floor (the measured input-ready point after launch),
-// capped so a slow or unexpected launch can never wedge Start.
+// capped so a slow or unexpected launch can never wedge Start. Returns early if
+// ctx is cancelled (the start request disconnected or shutdown began).
 func (s *Service) waitClaudeReady(ctx context.Context, name string) {
 	const minWait = 2 * time.Second
 	const maxWait = 15 * time.Second
 	launched := time.Now()
 	for {
-		if time.Since(launched) >= maxWait {
+		if ctx.Err() != nil || time.Since(launched) >= maxWait {
 			return
 		}
 		pane, err := s.tmux.CapturePane(ctx, name)
 		if err == nil && strings.Contains(pane, "❯") && time.Since(launched) >= minWait {
 			return
 		}
-		time.Sleep(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
 }
 
 // Resume re-launches Claude with --continue after an exit or box restart.
 // The Summary collector is (re)started so post-restart activity is folded in.
 func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
+	// Hold the send lock across the kill+recreate so an in-flight SendMessage
+	// retry loop can't press Enter into the freshly recreated session.
+	lock := s.sendLock(workspaceID)
+	lock.Lock()
+	defer lock.Unlock()
 	name := sessionName(workspaceID)
 	if s.jcode != nil {
 		// jcode sessions live on the bridge; StartSession is idempotent and
@@ -226,9 +239,9 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
+	s.startRecorder(ctx, workspaceID)
 	s.waitClaudeReady(ctx, name)
 	s.beginSummary(workspaceID, worktree)
-	s.startRecorder(ctx, workspaceID)
 	return name, nil
 }
 
@@ -322,9 +335,10 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	if lastErr != nil {
 		return lastErr
 	}
-	// Best effort: the text is staged in the composer; the browser terminal view
-	// still shows it, and a later Enter (or the user) can submit it.
-	return nil
+	// The prompt is staged in the composer but Claude never recorded a user turn.
+	// Report the failure so the caller sees a non-2xx and can retry, rather than
+	// a 200 for an undelivered prompt.
+	return fmt.Errorf("prompt not confirmed delivered after %d attempts", submitAttempts)
 }
 
 const (
@@ -333,19 +347,24 @@ const (
 )
 
 // claudeConvDir is where Claude writes this workspace's conversation JSONL:
-// $HOME/.claude/projects/<worktree-with-slashes-as-dashes>. The agent runs with
-// HOME=Root, so ~/.claude lives under Root; Claude encodes the session cwd (the
-// worktree) into the directory name by replacing every "/" with "-".
+// $HOME/.claude/projects/<slug>. It uses os.UserHomeDir() + claudeSlug — the same
+// derivation as SessionLog and conversationDest — rather than s.Root and a
+// slash-only replace, so it stays correct when HOME and Root differ or the path
+// contains a '.' (claudeSlug replaces both '/' and '.').
 func (s *Service) claudeConvDir(workspaceID string) string {
-	encoded := strings.ReplaceAll(s.worktreePath(workspaceID), "/", "-")
-	return filepath.Join(s.Root, ".claude", "projects", encoded)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = s.Root // best-effort fallback if HOME is unavailable
+	}
+	return filepath.Join(home, ".claude", "projects", claudeSlug(s.worktreePath(workspaceID)))
 }
 
 // userTurnCount totals the user messages Claude has recorded across the *.jsonl
 // files in dir (0 if it doesn't exist yet). We count user turns specifically
 // rather than total bytes so an in-flight assistant reply — which also grows the
 // log — can't be mistaken for our prompt being accepted. Each conversation entry
-// is one JSON line; a user turn carries "type":"user".
+// is one JSON line; parse its `type` field (rather than substring-matching
+// `"type":"user"`, which can appear inside an assistant turn's content).
 func userTurnCount(dir string) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -360,7 +379,17 @@ func userTurnCount(dir string) int {
 		if err != nil {
 			continue
 		}
-		count += strings.Count(string(data), `"type":"user"`)
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			var rec struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "user" {
+				count++
+			}
+		}
 	}
 	return count
 }
