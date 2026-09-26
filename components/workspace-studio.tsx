@@ -4,40 +4,35 @@ import Link from "next/link";
 import {
   ArrowLeft,
   FileDiff,
-  GitPullRequest,
   MessageSquarePlus,
   PanelRightClose,
   Plus,
+  Terminal,
   X,
 } from "lucide-react";
 import { useState } from "react";
 
 import { ProjectWorkspaceNav } from "@/components/project-workspace-nav";
 import { WorkspaceChanges } from "@/components/workspace-changes";
-import { WorkspaceLifecycleControls } from "@/components/workspace-lifecycle-controls";
 import { SessionComposer } from "@/components/session-composer";
-import { WorkspacePublishPanel } from "@/components/workspace-publish-panel";
 import { WorkspaceSession } from "@/components/workspace-session";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
-
-type SideTab = "diff" | "publish";
 
 export function WorkspaceStudio({
   workspace,
   allProjects,
   allWorkspaces,
-  pullRequest,
   initialPrompt,
 }: {
   workspace: Workspace;
   allProjects: Project[];
   allWorkspaces: Workspace[];
+  /** Kept for the page contract; the Publish panel was removed from the studio. */
   pullRequest: WorkspacePullRequest | null;
   /** First prompt carried in from the new-session screen, sent once connected. */
   initialPrompt?: string;
 }) {
-  const [activeTab, setActiveTab] = useState<SideTab>("diff");
   const [rightOpen, setRightOpen] = useState(true);
   const [showTerminal] = useState(false);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
@@ -46,6 +41,7 @@ export function WorkspaceStudio({
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
       <aside className="studio-sidebar">
+        <div className="studio-brand"><Terminal /> outrunner</div>
         <div className="studio-sidebar-top">
           <Link href="/" className="studio-back"><ArrowLeft /> Home</Link>
           <Link href="/new" className="studio-back" title="New session"><Plus /> New</Link>
@@ -105,34 +101,15 @@ export function WorkspaceStudio({
 
       {rightOpen && (
         <aside className="studio-inspector">
-          <div className="studio-inspector-tabs" role="tablist" aria-label="Workspace details">
-            <InspectorTab active={activeTab === "diff"} onClick={() => setActiveTab("diff")} icon={<FileDiff />} label="Changes" />
-            <InspectorTab active={activeTab === "publish"} onClick={() => setActiveTab("publish")} icon={<GitPullRequest />} label="Publish" />
+          <div className="studio-inspector-tabs" aria-label="Workspace changes">
+            <span className="studio-inspector-tab is-active"><FileDiff /> Changes</span>
             <button className="studio-close-inspector" onClick={() => setRightOpen(false)} title="Close inspector"><X /></button>
           </div>
-          <div className={cn("studio-inspector-content", activeTab === "diff" && "is-diff")}>
-            {activeTab === "diff" && (
-              <WorkspaceChanges workspaceId={workspace.id} active={isReady} baseBranch={workspace.baseBranch} />
-            )}
-            {activeTab === "publish" && <>
-              <div className="studio-inspector-heading"><div><p>Pull request</p><span>Publish this workspace when it is ready.</span></div><GitPullRequest /></div>
-              <WorkspacePublishPanel workspaceId={workspace.id} branch={workspace.branch} baseBranch={workspace.baseBranch} pullRequest={pullRequest} active={isReady} />
-              <div className="studio-compute-actions">
-                <div className="studio-inspector-heading"><div><p>Workspace controls</p><span>Pause or remove this isolated worktree.</span></div></div>
-                <WorkspaceLifecycleControls
-                  workspaceId={workspace.id}
-                  status={workspace.status}
-                  provider={workspace.provider}
-                />
-              </div>
-            </>}
+          <div className="studio-inspector-content is-diff">
+            <WorkspaceChanges workspaceId={workspace.id} active={isReady} baseBranch={workspace.baseBranch} />
           </div>
         </aside>
       )}
     </div>
   );
-}
-
-function InspectorTab({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
-  return <button role="tab" aria-selected={active} className={cn("studio-inspector-tab", active && "is-active")} onClick={onClick}>{icon}{label}</button>;
 }
