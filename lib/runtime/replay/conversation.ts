@@ -15,6 +15,9 @@
  */
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
 
+/** Block types the timeline renders; anything else is dropped (matches the live
+ *  AgentEvent schema in agent-protocol.ts). */
+const KNOWN_BLOCK_TYPES = new Set(["text", "thinking", "tool_use", "tool_result"]);
 /** String content-block fields the Go struct marshals with `omitempty`. */
 const STRING_KEYS = ["text", "id", "name", "toolUseId"] as const;
 /** Raw-JSON content-block fields (json.RawMessage on the Go side). */
@@ -78,7 +81,10 @@ function decodeLine(line: string): AgentEvent | null {
   const rawContent = message.content;
   let content: ContentBlock[];
   if (Array.isArray(rawContent) && rawContent.every(isObject)) {
-    content = rawContent.map(cleanBlock);
+    // Drop block types the timeline can't model (redacted_thinking, image, a
+    // newer Claude type) so replay matches the live schema, which does the same —
+    // otherwise an archived turn can leave an unrenderable block stuck.
+    content = rawContent.map(cleanBlock).filter((b) => KNOWN_BLOCK_TYPES.has(b.type));
   } else if (typeof rawContent === "string") {
     const text = rawContent.trim();
     if (text === "") return null; // empty prompt: nothing to render

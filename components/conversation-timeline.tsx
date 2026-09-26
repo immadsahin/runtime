@@ -4,11 +4,7 @@ import { Brain, ChevronDown, ChevronRight, Loader2, Sparkles, Terminal, Wrench }
 import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
-import type {
-  AgentEvent,
-  ContentBlock,
-  ConversationMessage,
-} from "@/lib/runtime/agent-protocol";
+import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
 import {
   describeToolUse,
   formatTokens,
@@ -69,10 +65,14 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
 function claudeIsWorking(events: AgentEvent[]): boolean {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
+    if (event.t === "state") {
+      // A terminated session is never "working", whatever the last turn was.
+      if (event.state === "exited" || event.state === "archived") return false;
+      continue;
+    }
     if (event.t !== "message") continue;
-    const message = event as ConversationMessage;
-    if (message.role === "user") return true;
-    const last = message.content[message.content.length - 1];
+    if (event.role === "user") return true; // a prompt or a tool result awaiting Claude
+    const last = event.content[event.content.length - 1];
     return last ? last.type !== "text" : false;
   }
   return false;
