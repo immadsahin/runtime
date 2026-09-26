@@ -254,7 +254,16 @@ export const ConversationMessage = z.object({
   parentUuid: z.string().nullable(),
   role: z.enum(["user", "assistant"]),
   timestamp: z.string(),
-  content: z.array(ContentBlock),
+  // Tolerate content blocks the UI doesn't model (e.g. redacted_thinking, image,
+  // or a newer Claude block type): drop the unrenderable ones instead of failing
+  // the whole frame ("Events frame did not match AgentEvent schema"). The
+  // timeline only renders the four known types anyway.
+  content: z.array(z.unknown()).transform((blocks) =>
+    blocks.flatMap((block) => {
+      const parsed = ContentBlock.safeParse(block);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  ),
 });
 export type ConversationMessage = z.infer<typeof ConversationMessage>;
 
