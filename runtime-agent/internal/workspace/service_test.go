@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -11,24 +10,27 @@ func TestOrientationUsesRecordedFacts(t *testing.T) {
 	s := NewService(t.TempDir())
 	s.setFacts("ws1", "feature/login", "main")
 
-	// worktree path is irrelevant here: recorded facts short-circuit the git fallback.
-	got := s.orientation(context.Background(), "ws1", "/nonexistent")
-	if !strings.Contains(got, "on branch `feature/login`, based on `main`,") {
-		t.Errorf("orientation did not use recorded facts:\n%s", got)
+	got := s.orientation("ws1", "/work/ws1")
+	if !strings.Contains(got, "in the /work/ws1 directory") {
+		t.Errorf("orientation did not use the worktree path:\n%s", got)
+	}
+	if !strings.Contains(got, "target branch for this workspace is origin/main") {
+		t.Errorf("orientation did not use the recorded base branch:\n%s", got)
 	}
 }
 
-func TestOrientationFallsBackToWorktreeBranch(t *testing.T) {
+func TestOrientationOmitsBaseWhenFactsMissing(t *testing.T) {
 	s := NewService(t.TempDir())
-	worktree := initRepoOnBranch(t, "recovered-branch")
 
-	// No facts recorded (simulates a box restart): branch comes from git, base is omitted.
-	got := s.orientation(context.Background(), "ws-missing", worktree)
-	if !strings.Contains(got, "on branch `recovered-branch`,") {
-		t.Errorf("orientation did not derive branch from worktree:\n%s", got)
+	// No facts recorded (simulates a box restart before the next Create): the
+	// base branch is unknown, so the target-branch guidance is omitted. The
+	// worktree path is always supplied by the call site, so it still renders.
+	got := s.orientation("ws-missing", "/work/ws-missing")
+	if !strings.Contains(got, "in the /work/ws-missing directory") {
+		t.Errorf("orientation did not include the worktree path:\n%s", got)
 	}
-	if strings.Contains(got, "based on") {
-		t.Errorf("base should be omitted when only git-derived:\n%s", got)
+	if strings.Contains(got, "target branch for this workspace") {
+		t.Errorf("base guidance should be omitted when facts are missing:\n%s", got)
 	}
 }
 
@@ -43,12 +45,6 @@ func TestCreateStripsRemotePrefixFromBase(t *testing.T) {
 	}
 	if f.branch != "feature/x" || f.baseBranch != "develop" {
 		t.Errorf("facts = %+v, want {feature/x develop}", f)
-	}
-}
-
-func TestGitBranchReturnsEmptyOutsideRepo(t *testing.T) {
-	if got := gitBranch(context.Background(), t.TempDir()); got != "" {
-		t.Errorf("gitBranch outside a repo = %q, want empty", got)
 	}
 }
 
@@ -67,24 +63,6 @@ func TestSessionEnvironmentExcludesAgentControlSecrets(t *testing.T) {
 	if !strings.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN=claude-secret") || len(secrets) != 1 || secrets[0] != "claude-secret" {
 		t.Fatalf("Claude credential was not retained safely: env=%q secrets=%q", got, secrets)
 	}
-}
-
-// initRepoOnBranch creates a throwaway git repo checked out on the named branch
-// and returns its path.
-func initRepoOnBranch(t *testing.T, branch string) string {
-	t.Helper()
-	dir := t.TempDir()
-	run := func(args ...string) {
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
-	}
-	run("init", "-q", "-b", branch)
-	run("config", "user.email", "test@example.com")
-	run("config", "user.name", "test")
-	run("commit", "-q", "--allow-empty", "-m", "init")
-	return dir
 }
 
 func TestValidSessionIDRejectsPathEscapes(t *testing.T) {

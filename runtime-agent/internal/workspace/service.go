@@ -175,7 +175,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	}
 	worktree := s.worktreePath(workspaceID)
 	env := claude.SessionEnv(s.env, anthropicToken)
-	cmd := claude.Command(s.orientation(ctx, workspaceID, worktree))
+	cmd := claude.Command(s.orientation(workspaceID, worktree))
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
@@ -200,7 +200,7 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	env := claude.SessionEnv(s.env, anthropicToken)
-	cmd := claude.ContinueCommand(s.orientation(ctx, workspaceID, worktree))
+	cmd := claude.ContinueCommand(s.orientation(workspaceID, worktree))
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
@@ -209,16 +209,14 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 	return name, nil
 }
 
-// orientation builds Claude's orientation prompt for a workspace. It prefers the
+// orientation builds Claude's orientation prompt for a workspace. It uses the
 // facts recorded at Create; if those were lost (box restart before the next
-// Create), it falls back to the branch checked out in the worktree and omits the
-// base — a degraded but still-useful prompt (see claude.Orientation).
-func (s *Service) orientation(ctx context.Context, workspaceID, worktree string) string {
-	f, ok := s.getFacts(workspaceID)
-	if !ok {
-		f = workspaceFacts{branch: gitBranch(ctx, worktree)}
-	}
-	return claude.Orientation(f.branch, f.baseBranch)
+// Create), getFacts returns the zero value and the base branch is empty, so
+// claude.Orientation omits the target-branch guidance — a degraded but still
+// useful prompt (see claude.Orientation).
+func (s *Service) orientation(workspaceID, worktree string) string {
+	f, _ := s.getFacts(workspaceID)
+	return claude.Orientation(worktree, f.baseBranch)
 }
 
 func (s *Service) setFacts(workspaceID, branch, baseBranch string) {
@@ -232,17 +230,6 @@ func (s *Service) getFacts(workspaceID string) (workspaceFacts, bool) {
 	defer s.mu.Unlock()
 	f, ok := s.facts[workspaceID]
 	return f, ok
-}
-
-// gitBranch reports the branch checked out in worktree, or "" if it can't be
-// determined. Best-effort: a missing branch only degrades the orientation prompt,
-// so errors are swallowed rather than surfaced.
-func gitBranch(ctx context.Context, worktree string) string {
-	out, err := exec.CommandContext(ctx, "git", "-C", worktree, "rev-parse", "--abbrev-ref", "HEAD").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
 }
 
 // Stop ends the Claude session and stops the Summary collector, marking the
