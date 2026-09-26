@@ -3,7 +3,10 @@
 // it talk to Anthropic directly with the injected session credentials.
 package claude
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Command returns the argv for launching an interactive Claude Code session.
 //
@@ -35,31 +38,41 @@ func withOrientation(argv []string, orientation string) []string {
 	return append(argv, "--append-system-prompt", orientation)
 }
 
-// Orientation renders the Runtime orientation system prompt injected at session
-// start. It is the floor of the prompt layering
-// (Runtime orientation → repo CLAUDE.md → owner → task): only *where* the
-// session runs plus the workspace rules. Coding style and project conventions
-// deliberately belong in CLAUDE.md, not here.
+// Orientation renders the Outrunner orientation system prompt injected at
+// session start via --append-system-prompt. It is the floor of the prompt
+// layering (Outrunner orientation → repo CLAUDE.md → owner → task): it tells
+// the agent where it is running and the workspace rules. Coding style and
+// project conventions deliberately belong in CLAUDE.md, not here.
 //
-// It is pure and always renders the four rules; the location sentence adapts to
-// whichever of branch/baseBranch are known. Both may be empty after a box
-// restart that lost the in-memory facts — the rules still stand on their own.
-func Orientation(branch, baseBranch string) string {
-	var location string
-	switch {
-	case branch != "" && baseBranch != "":
-		location = fmt.Sprintf("an isolated git worktree on branch `%s`, based on `%s`,", branch, baseBranch)
-	case branch != "":
-		location = fmt.Sprintf("an isolated git worktree on branch `%s`,", branch)
-	default:
-		location = "an isolated git worktree"
+// worktree is the absolute path of the workspace's git worktree (the agent's
+// working directory). baseBranch is the branch pull requests target, e.g.
+// "main". Both may be empty after a box restart that lost the recorded facts:
+// an empty worktree degrades to a generic phrase, and an empty baseBranch omits
+// the target-branch guidance entirely rather than naming a bogus base.
+func Orientation(worktree, baseBranch string) string {
+	workingDir := worktree
+	if workingDir == "" {
+		workingDir = "workspace"
 	}
-	return fmt.Sprintf(`You are running inside a Runtime Workspace: %s inside a persistent cloud computer.
+	screenshotPath := ".context/screenshot.png"
+	if worktree != "" {
+		screenshotPath = worktree + "/.context/screenshot.png"
+	}
 
-- Your session persists. The user may disconnect and reconnect; keep working.
-- Your changes stay on this branch and are published as a pull request. Do not switch branches or push to the base branch.
-- Other workspaces are isolated from yours.
-- Follow this repository's CLAUDE.md and conventions.`, location)
+	var b strings.Builder
+	b.WriteString("You are working inside Outrunner, a Mac app that lets the user run many coding agents in parallel.\n")
+	fmt.Fprintf(&b, "Your work should take place in the %s directory (unless otherwise directed), which has been set up for you to work in.\n", workingDir)
+	b.WriteString("Each workspace has a .context directory (gitignored) where you can save files to collaborate with other agents.\n")
+	if baseBranch != "" {
+		fmt.Fprintf(&b, "The target branch for this workspace is origin/%s. Use this for actions like diffing (git diff origin/%s...) or creating PRs (gh pr create --base %s).\n", baseBranch, baseBranch, baseBranch)
+	}
+	b.WriteString("\nDo not rename the current branch unless the user explicitly tells you to do so.\n")
+	b.WriteString("\nBy default, the user will only see the last message that you send before stopping. Include all essential information in the last message. The intermediate messages will be collapsed and accessible by the user but not displayed by default.\n")
+	fmt.Fprintf(&b, "\nSave screenshots under .context/ and embed them inline in the final response using Markdown image syntax, for example ![Screenshot](<%s>).\n", screenshotPath)
+	b.WriteString("\nIf the user asks you to work on several unrelated tasks, you can suggest they start new workspaces.\n")
+	b.WriteString("Sometimes the user might send you a message they meant to send in a different workspace or a different chat. If something doesn't make sense in the context of your work, just ask.\n")
+	b.WriteString("If the user asks for help with Outrunner, you can ask them to go to \"Help -> Send Feedback\" to get in touch with our team.")
+	return b.String()
 }
 
 // SessionEnv builds the environment for a Claude session. The Anthropic
