@@ -4,7 +4,6 @@ import Link from "next/link";
 import {
   ArrowLeft,
   FileDiff,
-  GitBranch,
   GitPullRequest,
   MessageSquarePlus,
   PanelRightClose,
@@ -45,7 +44,7 @@ export function WorkspaceStudio({
   const hasLiveSession = isReady && workspace.provider === "daytona";
 
   return (
-    <div className="studio-shell">
+    <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
       <aside className="studio-sidebar">
         <div className="studio-sidebar-top">
           <Link href="/" className="studio-back"><ArrowLeft /> Home</Link>
@@ -111,11 +110,10 @@ export function WorkspaceStudio({
             <InspectorTab active={activeTab === "publish"} onClick={() => setActiveTab("publish")} icon={<GitPullRequest />} label="Publish" />
             <button className="studio-close-inspector" onClick={() => setRightOpen(false)} title="Close inspector"><X /></button>
           </div>
-          <div className="studio-inspector-content">
-            {activeTab === "diff" && <>
-              <div className="studio-inspector-heading"><div><p>Worktree changes</p><span>Compared with {workspace.baseBranch}</span></div><GitBranch /></div>
-              <WorkspaceChanges workspaceId={workspace.id} active={isReady} />
-            </>}
+          <div className={cn("studio-inspector-content", activeTab === "diff" && "is-diff")}>
+            {activeTab === "diff" && (
+              <WorkspaceChanges workspaceId={workspace.id} active={isReady} baseBranch={workspace.baseBranch} />
+            )}
             {activeTab === "publish" && <>
               <div className="studio-inspector-heading"><div><p>Pull request</p><span>Publish this workspace when it is ready.</span></div><GitPullRequest /></div>
               <WorkspacePublishPanel workspaceId={workspace.id} branch={workspace.branch} baseBranch={workspace.baseBranch} pullRequest={pullRequest} active={isReady} />

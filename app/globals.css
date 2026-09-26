@@ -111,7 +111,10 @@
   --studio-red: #f85149;
   --studio-amber: #d29922;
   display: grid;
-  grid-template-columns: 272px minmax(0, 1fr) minmax(350px, 28vw);
+  /* Full split view: sidebar, chat, and a wide changes+diff panel share the
+     width (chat a touch wider). Collapses to sidebar+chat when the inspector is
+     closed. */
+  grid-template-columns: 272px minmax(0, 1.15fr) minmax(460px, 1fr);
   /* Definite height (not min-height) so the grid tracks are bounded: the chat
      column's conversation scrolls internally and its composer stays pinned at
      the bottom, instead of the whole page growing and scrolling. */
@@ -176,6 +179,13 @@
 .studio-composer-tag { display:inline-flex; align-items:center; color:var(--studio-text-2); font:11px var(--font-geist-mono); }
 
 .studio-inspector { min-width: 0; border-left: 1px solid var(--studio-line); background: var(--studio-bg); }.studio-inspector-tabs { display:flex;align-items:center;gap:3px;height:60px;padding:0 11px;border-bottom:1px solid var(--studio-line); }.studio-inspector-tab { display:flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid transparent;border-radius:8px;color:var(--studio-muted);background:transparent;font-size:12px;cursor:pointer; }.studio-inspector-tab:hover { color:var(--studio-text); }.studio-inspector-tab.is-active { border-color:var(--studio-line);color:var(--studio-text);background:var(--studio-hover); }.studio-inspector-tab svg { width:14px; }.studio-close-inspector { margin-left:auto; }.studio-inspector-content { height:calc(100vh - 60px);overflow:auto;padding:19px; }.studio-inspector-heading { display:flex;justify-content:space-between;align-items:start;margin-bottom:18px; }.studio-inspector-heading p { margin:0;color:var(--studio-text);font-size:13px;font-weight:650; }.studio-inspector-heading span { display:block;margin-top:4px;color:var(--studio-muted);font-size:11px;line-height:1.4; }.studio-inspector-heading > svg { width:17px;color:var(--studio-dim); }
+/* Full split view for the Changes tab: file list + diff side by side. */
+.studio-shell.no-inspector { grid-template-columns: 272px minmax(0, 1fr); }
+.studio-inspector-content.is-diff { padding: 0; overflow: hidden; }
+.studio-changes-split { display: grid; grid-template-columns: minmax(220px, 264px) minmax(0, 1fr); height: 100%; min-height: 0; }
+.studio-changes-list { display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-right: 1px solid var(--studio-line); }
+.studio-changes-diff { min-height: 0; overflow: auto; background: var(--studio-bg); }
+.studio-changes-empty { display: flex; height: 100%; align-items: center; justify-content: center; padding: 24px; color: var(--studio-muted); font-size: 12px; text-align: center; }
 .studio-inspector-content .space-y-4 > div:first-child { display:none; }.studio-inspector-content .space-y-4 > ul { border-color:var(--studio-line);border-radius:8px; }.studio-inspector-content .space-y-4 > ul button { color:var(--studio-text-2); }.studio-inspector-content .space-y-4 > p { color:var(--studio-muted); }.studio-inspector-content .bg-muted\/50 { background:var(--studio-panel); }.studio-inspector-content button { font-size:11px; }.studio-terminal pre { padding:14px;border:1px solid var(--studio-line);border-radius:8px;color:var(--studio-text);background:var(--studio-panel);font:11px/1.8 var(--font-geist-mono);white-space:pre-wrap; }.terminal-muted { color:var(--studio-dim); }.terminal-green { margin:0 7px;color:var(--studio-green); }.studio-terminal-note { color:var(--studio-muted);font-size:11px; }
 .studio-compute-actions { margin-top:24px;padding-top:20px;border-top:1px solid var(--studio-line); }.studio-compute-actions .studio-inspector-heading { margin-bottom:12px; }
 

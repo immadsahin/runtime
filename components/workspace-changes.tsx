@@ -1,12 +1,13 @@
 "use client";
 
-import { FileDiff, GitCommitHorizontal, LoaderCircle, RefreshCw } from "lucide-react";
+import { GitCommitHorizontal, LoaderCircle, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DiffView } from "@/components/diff-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { commitMessageError } from "@/lib/runtime/commit";
+import { cn } from "@/lib/utils";
 import type { ChangedFile } from "@/lib/runtime/types";
 
 const statusVariant: Record<ChangedFile["status"], "default" | "secondary" | "outline" | "destructive"> = {
@@ -20,9 +21,11 @@ const statusVariant: Record<ChangedFile["status"], "default" | "secondary" | "ou
 export function WorkspaceChanges({
   workspaceId,
   active,
+  baseBranch,
 }: {
   workspaceId: string;
   active: boolean;
+  baseBranch?: string;
 }) {
   const [files, setFiles] = useState<ChangedFile[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -167,109 +170,116 @@ export function WorkspaceChanges({
   }, [workspaceId, summary, description, refresh]);
 
   if (!active) {
-    return (
-      <p className="text-muted-foreground text-sm">
-        Changes are available once the workspace is ready.
-      </p>
-    );
+    return <div className="studio-changes-empty">Changes are available once the workspace is ready.</div>;
   }
 
   const hasChanges = !!files && files.length > 0;
   const canCommit = hasChanges && commitMessageError(summary) === null && !committing;
+  const line = { borderColor: "var(--studio-line)" };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-muted-foreground text-xs">
-          Uncommitted changes in the active worktree.
-        </p>
-        <Button disabled={loading} onClick={() => void refresh()} size="sm" variant="outline">
-          {loading ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-          Refresh
-        </Button>
-      </div>
-
-      {message && (
-        <p aria-live="polite" className="text-destructive text-xs">
-          {message}
-        </p>
-      )}
-
-      {files === null && !message && (
-        <p className="text-muted-foreground flex items-center gap-1.5 text-sm">
-          <LoaderCircle className="size-3.5 animate-spin" /> Loading changes…
-        </p>
-      )}
-
-      {files && files.length === 0 && !message && (
-        <p className="text-muted-foreground text-sm">
-          No uncommitted changes in this workspace.
-        </p>
-      )}
-
-      {hasChanges && (
-        <ul className="divide-y rounded-md border">
-          {files!.map((file) => (
-            <li key={file.path}>
-              <button
-                className="hover:bg-accent/50 flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors"
-                onClick={() => void openDiff(file.path)}
-                type="button"
-              >
-                <Badge variant={statusVariant[file.status]} className="shrink-0 capitalize">
-                  {file.status}
-                </Badge>
-                <span className="truncate font-mono text-xs">{file.path}</span>
-                {selected === file.path && <FileDiff className="text-muted-foreground ml-auto size-3.5 shrink-0" />}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {selected && (
-        <div className="space-y-1.5">
-          <p className="font-mono text-xs break-all">{selected}</p>
-          {diffLoading ? (
-            <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
-              <LoaderCircle className="size-3.5 animate-spin" /> Loading diff…
+    <div className="studio-changes-split">
+      {/* Left column: file list + commit form */}
+      <div className="studio-changes-list">
+        <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5" style={line}>
+          <div className="min-w-0">
+            <p className="text-[13px] font-semibold text-foreground">
+              Changes{files ? ` (${files.length})` : ""}
             </p>
-          ) : (
-            <DiffView diff={diff ?? ""} />
-          )}
-        </div>
-      )}
-
-      {hasChanges && (
-        <div className="space-y-2 border-t pt-3">
-          <input
-            aria-label="Commit summary"
-            className="w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus:border-ring"
-            disabled={committing}
-            maxLength={256}
-            onChange={(e) => setSummary(e.target.value)}
-            placeholder="Commit summary"
-            value={summary}
-          />
-          <textarea
-            aria-label="Commit description"
-            className="min-h-16 w-full resize-none rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus:border-ring"
-            disabled={committing}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Description (optional)"
-            value={description}
-          />
-          {commitError && (
-            <p aria-live="polite" className="text-destructive text-xs">
-              {commitError}
-            </p>
-          )}
-          <Button className="w-full" disabled={!canCommit} onClick={() => void commit()} size="sm">
-            {committing ? <LoaderCircle className="animate-spin" /> : <GitCommitHorizontal />}
-            Commit {files!.length} file{files!.length === 1 ? "" : "s"}
+            {baseBranch && (
+              <p className="truncate text-[11px] text-muted-foreground">Compared with {baseBranch}</p>
+            )}
+          </div>
+          <Button disabled={loading} onClick={() => void refresh()} size="icon" variant="outline" title="Refresh">
+            {loading ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
           </Button>
         </div>
-      )}
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {message && <p aria-live="polite" className="px-3 py-2 text-destructive text-xs">{message}</p>}
+          {files === null && !message && (
+            <p className="flex items-center gap-1.5 px-3 py-2 text-muted-foreground text-sm">
+              <LoaderCircle className="size-3.5 animate-spin" /> Loading changes…
+            </p>
+          )}
+          {files && files.length === 0 && !message && (
+            <p className="px-3 py-3 text-muted-foreground text-xs">No uncommitted changes.</p>
+          )}
+          {hasChanges && (
+            <ul>
+              {files!.map((file) => (
+                <li key={file.path}>
+                  <button
+                    type="button"
+                    onClick={() => void openDiff(file.path)}
+                    className={cn(
+                      "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent/50",
+                      selected === file.path && "bg-accent",
+                    )}
+                  >
+                    <Badge variant={statusVariant[file.status]} className="shrink-0 capitalize">
+                      {file.status}
+                    </Badge>
+                    <span className="truncate font-mono">{file.path}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {hasChanges && (
+          <div className="space-y-2 border-t p-3" style={line}>
+            <input
+              aria-label="Commit summary"
+              className="w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus:border-ring"
+              disabled={committing}
+              maxLength={256}
+              onChange={(e) => setSummary(e.target.value)}
+              placeholder="Commit summary"
+              value={summary}
+            />
+            <textarea
+              aria-label="Commit description"
+              className="min-h-16 w-full resize-none rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus:border-ring"
+              disabled={committing}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Description (optional)"
+              value={description}
+            />
+            {commitError && <p aria-live="polite" className="text-destructive text-xs">{commitError}</p>}
+            <Button className="w-full" disabled={!canCommit} onClick={() => void commit()} size="sm">
+              {committing ? <LoaderCircle className="animate-spin" /> : <GitCommitHorizontal />}
+              Commit {files!.length} file{files!.length === 1 ? "" : "s"}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Right column: the diff */}
+      <div className="studio-changes-diff">
+        {!selected ? (
+          <div className="studio-changes-empty">
+            {hasChanges ? "Select a file to view its diff." : "No changes to show."}
+          </div>
+        ) : diffLoading ? (
+          <div className="studio-changes-empty">
+            <LoaderCircle className="mr-2 size-4 animate-spin" /> Loading diff…
+          </div>
+        ) : (
+          <div>
+            <div
+              className="sticky top-0 z-10 border-b px-4 py-2 font-mono text-xs break-all text-foreground"
+              style={{ borderColor: "var(--studio-line)", background: "var(--studio-bg)" }}
+            >
+              {selected}
+            </div>
+            <div className="p-2">
+              <DiffView diff={diff ?? ""} />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
