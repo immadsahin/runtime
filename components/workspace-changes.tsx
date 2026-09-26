@@ -190,7 +190,7 @@ export function WorkspaceChanges({
               <p className="truncate text-[11px] text-muted-foreground">Compared with {baseBranch}</p>
             )}
           </div>
-          <Button disabled={loading} onClick={() => void refresh()} size="icon" variant="outline" title="Refresh">
+          <Button disabled={loading} onClick={() => void refresh()} size="icon" variant="ghost" title="Refresh">
             {loading ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
           </Button>
         </div>
