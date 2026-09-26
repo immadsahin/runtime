@@ -1,6 +1,5 @@
 "use client";
 
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { Brain, ChevronRight, Terminal, Wrench } from "lucide-react";
 import { useEffect, useRef } from "react";
 
@@ -27,20 +26,14 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
 
-  const virtualizer = useVirtualizer({
-    count: events.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 88,
-    overscan: 8,
-  });
-
   // Auto-follow: keep pinned to the bottom as events arrive, unless the user
-  // scrolled up (then honor their position).
+  // scrolled up (then honor their position). A plain scrollTop write — no
+  // virtualizer — so there's no flushSync-during-render from measureElement.
   useEffect(() => {
-    if (!stickToBottom.current) return;
-    if (events.length === 0) return;
-    virtualizer.scrollToIndex(events.length - 1, { align: "end" });
-  }, [events.length, virtualizer]);
+    const el = parentRef.current;
+    if (!el || !stickToBottom.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [events]);
 
   return (
     <div
@@ -58,30 +51,13 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
           Waiting for Claude to speak…
         </div>
       )}
-      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-        {virtualizer.getVirtualItems().map((row) => {
-          const event = events[row.index];
-          return (
-            <div
-              key={row.key}
-              data-index={row.index}
-              ref={virtualizer.measureElement}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                transform: `translateY(${row.start}px)`,
-                width: "100%",
-              }}
-              className="px-4 py-2"
-            >
-              <div className="mx-auto max-w-3xl">
-                <EventRow event={event} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {events.map((event, i) => (
+        <div key={event.t === "message" ? event.uuid : `${event.t}-${i}`} className="px-4 py-2">
+          <div className="mx-auto max-w-3xl">
+            <EventRow event={event} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
