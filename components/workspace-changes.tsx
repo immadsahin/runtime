@@ -1,12 +1,11 @@
 "use client";
 
-import { ChevronRight, GitCommitHorizontal, LoaderCircle, RefreshCw } from "lucide-react";
+import { ChevronRight, LoaderCircle, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { DiffView } from "@/components/diff-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { commitMessageError } from "@/lib/runtime/commit";
 import { cn } from "@/lib/utils";
 import type { ChangedFile } from "@/lib/runtime/types";
 
@@ -39,12 +38,6 @@ export function WorkspaceChanges({
   const [diffs, setDiffs] = useState<Record<string, string>>({});
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
   const [openPaths, setOpenPaths] = useState<Set<string>>(new Set());
-
-  // Commit-from-UI (commit only; publish still owns commit+push+PR).
-  const [summary, setSummary] = useState("");
-  const [description, setDescription] = useState("");
-  const [committing, setCommitting] = useState(false);
-  const [commitError, setCommitError] = useState<string | null>(null);
 
   const fetchChanges = useCallback(
     async (signal?: AbortSignal): Promise<{ files: ChangedFile[] } | { error: string }> => {
@@ -95,13 +88,12 @@ export function WorkspaceChanges({
       }
       setMessage(null);
       setFiles(result.files);
-      // Open every changed file and load its diff so changes show automatically.
-      const paths = result.files.map((f) => f.path);
-      setOpenPaths(new Set(paths));
+      // Collapsed by default — just the file list; the diff loads when a file is
+      // expanded.
+      setOpenPaths(new Set());
       setDiffs({});
-      for (const p of paths) void loadDiff(p);
     },
-    [loadDiff],
+    [],
   );
 
   const refresh = useCallback(async () => {
@@ -149,37 +141,11 @@ export function WorkspaceChanges({
     });
   };
 
-  const commit = useCallback(async () => {
-    setCommitting(true);
-    setCommitError(null);
-    try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/commit`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ summary, description }),
-      });
-      const result = (await response.json().catch(() => ({}))) as { error?: string };
-      if (!response.ok) {
-        setCommitError(result.error ?? "Could not commit.");
-        return;
-      }
-      // Committed: clear the form and refetch the (now-empty) changed set.
-      setSummary("");
-      setDescription("");
-      await refresh();
-    } catch {
-      setCommitError("Could not reach Runtime. Please try again.");
-    } finally {
-      setCommitting(false);
-    }
-  }, [workspaceId, summary, description, refresh]);
-
   if (!active) {
     return <div className="studio-changes-empty">Changes are available once the workspace is ready.</div>;
   }
 
   const hasChanges = !!files && files.length > 0;
-  const canCommit = hasChanges && commitMessageError(summary) === null && !committing;
   const totalAdd = files?.reduce((a, f) => a + f.additions, 0) ?? 0;
   const totalDel = files?.reduce((a, f) => a + f.deletions, 0) ?? 0;
 
@@ -250,33 +216,6 @@ export function WorkspaceChanges({
             );
           })}
       </div>
-
-      {hasChanges && (
-        <div className="studio-changes-commit">
-          <input
-            aria-label="Commit summary"
-            className="w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus:border-ring"
-            disabled={committing}
-            maxLength={256}
-            onChange={(e) => setSummary(e.target.value)}
-            placeholder="Commit summary"
-            value={summary}
-          />
-          <textarea
-            aria-label="Commit description"
-            className="min-h-16 w-full resize-none rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus:border-ring"
-            disabled={committing}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Description (optional)"
-            value={description}
-          />
-          {commitError && <p aria-live="polite" className="text-destructive text-xs">{commitError}</p>}
-          <Button className="w-full" disabled={!canCommit} onClick={() => void commit()} size="sm">
-            {committing ? <LoaderCircle className="animate-spin" /> : <GitCommitHorizontal />}
-            Commit {files!.length} file{files!.length === 1 ? "" : "s"}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }
