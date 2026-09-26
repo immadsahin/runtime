@@ -259,9 +259,9 @@ export function WorkspaceChanges({
       {/* Right column: the diff */}
       <div className="studio-changes-diff">
         {!selected ? (
-          <div className="studio-changes-empty">
-            {hasChanges ? "Select a file to view its diff." : "No changes to show."}
-          </div>
+          hasChanges ? (
+            <div className="studio-changes-empty">Select a file to view its diff.</div>
+          ) : null
         ) : diffLoading ? (
           <div className="studio-changes-empty">
             <LoaderCircle className="mr-2 size-4 animate-spin" /> Loading diff…
