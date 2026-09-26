@@ -50,7 +50,7 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
         stickToBottom.current =
           el.scrollHeight - el.scrollTop - el.clientHeight < 120;
       }}
-      className="h-full min-h-0 overflow-auto bg-background text-[13.5px] leading-relaxed text-foreground"
+      className="min-h-0 flex-1 overflow-auto bg-background text-[13.5px] leading-relaxed text-foreground"
     >
       {events.length === 0 && (
         <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
