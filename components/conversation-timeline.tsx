@@ -1,6 +1,6 @@
 "use client";
 
-import { Brain, ChevronRight, Terminal, Wrench } from "lucide-react";
+import { Brain, ChevronRight, Loader2, Terminal, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
@@ -58,7 +58,7 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
           </div>
         </div>
       ))}
-      {awaitingReply(events) && (
+      {claudeIsWorking(events) && (
         <div className="px-4 py-2">
           <div className="mx-auto max-w-3xl">
             <WorkingIndicator />
@@ -69,18 +69,26 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
   );
 }
 
-/** True while the latest turn is the user's and Claude hasn't started replying —
- *  the gap where the pane would otherwise sit blank after a send. */
-function awaitingReply(events: AgentEvent[]): boolean {
+/** Whether Claude is still working on the current turn — so the moving indicator
+ *  shows through the whole thing, not just the gap before the first reply. It's
+ *  working while the latest turn is the user's (a fresh prompt or a tool result
+ *  it must act on), or while its own latest turn ended on thinking or a tool_use
+ *  (more is coming). A turn that ends in text is Claude done and idle. */
+function claudeIsWorking(events: AgentEvent[]): boolean {
   for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].t === "message") return (events[i] as ConversationMessage).role === "user";
+    const event = events[i];
+    if (event.t !== "message") continue;
+    const message = event as ConversationMessage;
+    if (message.role === "user") return true;
+    const last = message.content[message.content.length - 1];
+    return last ? last.type !== "text" : false;
   }
   return false;
 }
 
-/** Live "Claude is working" affordance: a pulsing dot and an elapsed timer, so a
- *  send visibly kicks off work instead of showing nothing until the reply lands.
- *  Remounts (resetting the clock) each time we re-enter the awaiting state. */
+/** Live "Claude is working" affordance: a spinning glyph and an elapsed timer,
+ *  so activity is visible instead of a still pane. Remounts (resetting the
+ *  clock) each time we re-enter the working state. */
 function WorkingIndicator() {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -90,10 +98,7 @@ function WorkingIndicator() {
   }, []);
   return (
     <div className="flex items-center gap-2 py-1 text-[13px] text-muted-foreground">
-      <span className="relative flex size-2">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-muted-foreground/60" />
-        <span className="relative inline-flex size-2 rounded-full bg-muted-foreground" />
-      </span>
+      <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
       <span>Working</span>
       <span className="font-mono text-[11px] text-muted-foreground/70">{(elapsed / 1000).toFixed(1)}s</span>
     </div>
