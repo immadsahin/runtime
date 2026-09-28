@@ -1,0 +1,31 @@
+# Build context for the Cloudflare Containers / Railway control-plane image.
+# Keep the image lean AND keep secrets out of it (env is injected at runtime).
+
+# Deps & build artifacts (reinstalled/rebuilt in the image)
+node_modules
+**/node_modules
+.next
+out
+
+# Secrets / local config — env is injected by the platform, never baked in
+.env
+.env.*
+!.env.example
+
+# Not needed by the Next.js control plane at build or runtime
+runtime-desktop
+runtime-agent
+!bin/runtime-agent-linux-amd64
+test
+supabase
+docs
+.context
+.hoplite
+
+# VCS / misc
+.git
+.gitignore
+*.log
+npm-debug.log*
+.DS_Store
+cloudflare
