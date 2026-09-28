@@ -148,9 +148,12 @@ export type EventSubscription = {
 export type EventSubscribeOptions = {
   /** Cursor to resume from; if set, appended as `?lastEventId=<id>`. */
   lastEventId?: string | null;
-  /** Called on browser-detected connection loss; hook triggers URL refresh. */
+  /** Called on browser-detected connection loss (close OR transport error); the
+   *  hook debounces these into one URL refresh + re-subscribe. */
   onClose?: () => void;
-  /** Schema-mismatch or transport error, not lifecycle. */
+  /** A real protocol failure — a frame that isn't valid JSON or doesn't match
+   *  the AgentEvent schema. NOT transport loss (that is `onClose`), so an idle
+   *  socket drop never surfaces here. */
   onError?: (error: Error) => void;
 };
 
@@ -219,8 +222,18 @@ export function subscribeEventsWs(
     options.onClose?.();
   });
 
+  // A transport error is lifecycle loss, not a protocol error: the browser
+  // fires it (usually right before 'close') when an idle socket is reaped by an
+  // intermediary or a backgrounded webview suspends it. Route it through the
+  // same silent reconnect path as 'close' — idempotent via `disposed`, so the
+  // pair never double-counts — instead of surfacing a user-facing error.
+  // Flashing a red banner for a blip the hook heals transparently is exactly the
+  // idle "Events WebSocket error" noise we don't want; onError stays reserved
+  // for real protocol failures, which never occur on an idle connection.
   ws.addEventListener("error", () => {
-    options.onError?.(new Error("Events WebSocket error"));
+    if (disposed) return;
+    dispose();
+    options.onClose?.();
   });
 
   function dispose(): void {
