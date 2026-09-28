@@ -225,3 +225,25 @@ func TestDecodeEmptyStringContentIsDropped(t *testing.T) {
 		t.Fatal("expected an empty-string prompt to be dropped")
 	}
 }
+
+func TestDecodeCapturesAssistantModel(t *testing.T) {
+	// An assistant turn carries the model that produced it; the composer shows it.
+	line := `{"type":"assistant","uuid":"a","timestamp":"t","message":{"role":"assistant","model":"claude-opus-4-5-20250115","content":[{"type":"text","text":"hi"}]}}`
+	ev, ok := decode([]byte(line))
+	if !ok || ev.Message == nil {
+		t.Fatal("expected an assistant message event, got none")
+	}
+	if ev.Message.Model != "claude-opus-4-5-20250115" {
+		t.Fatalf("model = %q, want the assistant model", ev.Message.Model)
+	}
+
+	// A user prompt carries no model.
+	userLine := `{"type":"user","uuid":"x","timestamp":"t","message":{"role":"user","content":"hi"}}`
+	uev, ok := decode([]byte(userLine))
+	if !ok || uev.Message == nil {
+		t.Fatal("expected a user message event, got none")
+	}
+	if uev.Message.Model != "" {
+		t.Fatalf("user turn model = %q, want empty", uev.Message.Model)
+	}
+}

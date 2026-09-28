@@ -93,6 +93,11 @@ function decodeLine(line: string): AgentEvent | null {
     return null;
   }
 
+  // Mirror the Go `omitempty`: include `model` only when present (assistant
+  // turns), so replay stays byte-equivalent to the live decoder and the shared
+  // fixture (user turns carry no model).
+  const model = typeof message.model === "string" && message.model !== "" ? message.model : undefined;
+
   return {
     t: "message",
     uuid: typeof rec.uuid === "string" ? rec.uuid : "",
@@ -100,6 +105,7 @@ function decodeLine(line: string): AgentEvent | null {
     // Pass the role through as the agent does — never silently relabel an
     // unexpected role as "assistant".
     role: (typeof message.role === "string" ? message.role : "") as "user" | "assistant",
+    ...(model ? { model } : {}),
     timestamp: typeof rec.timestamp === "string" ? rec.timestamp : "",
     content,
   };
