@@ -132,11 +132,18 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
   // visible, regains focus, or the network returns, reset the retry budget and
   // reconnect at once so the stream is healthy again before the next prompt,
   // instead of waiting for a POST to incidentally revive it.
+  //
+  // Re-arm only for a transport loss: `ws.closed` (the socket dropped) or an
+  // attachment "error" (a /session refetch that failed, e.g. offline, so a
+  // returning network can retry it). A protocol error on a still-open socket
+  // (`ws.error` while `ws.closed` is false) must NOT trigger this — reconnecting
+  // would tear down a healthy socket on the next focus. reconnect() just
+  // schedules refresh(), so it is safe to arm during "error" as well as
+  // "attached".
+  const transportLost = ws.closed || attachmentStatus === "error";
   useEffect(() => {
-    if (attachmentStatus !== "attached") return;
-    // Only nudge when we're actually unhealthy; a focus event on a live stream
-    // must not churn the socket. When hidden, defer to the next visible event.
-    if (!ws.closed && !ws.error) return;
+    if (attachmentStatus !== "attached" && attachmentStatus !== "error") return;
+    if (!transportLost) return;
     const rearm = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       reconnectAttemptsRef.current = 0;
@@ -151,7 +158,7 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
       window.removeEventListener("focus", rearm);
       window.removeEventListener("online", rearm);
     };
-  }, [attachmentStatus, ws.closed, ws.error, reconnect]);
+  }, [attachmentStatus, transportLost, reconnect]);
 
   const status = useMemo<ConversationStreamState["status"]>(() => {
     if (attachmentStatus === "loading") return "loading";

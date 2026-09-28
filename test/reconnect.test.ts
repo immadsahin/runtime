@@ -15,12 +15,15 @@ test("reconnectPlan backs off exponentially from the base delay", () => {
   assert.deepEqual(reconnectPlan(4), { retry: true, delayMs: RECONNECT_BASE_MS * 8 });
 });
 
-test("reconnectPlan caps the delay at RECONNECT_MAX_MS", () => {
-  // A base of 500ms doubling would blow past the cap well before the attempt
-  // budget runs out, so late in-budget attempts pin to the ceiling.
-  const plan = reconnectPlan(MAX_RECONNECT_ATTEMPTS);
-  assert.equal(plan.retry, true);
-  if (plan.retry) assert.ok(plan.delayMs <= RECONNECT_MAX_MS);
+test("reconnectPlan pins late in-budget attempts to the delay ceiling", () => {
+  // The raw exponential delay for the last in-budget attempt exceeds the cap,
+  // so it must clamp to exactly RECONNECT_MAX_MS (the capping path is real).
+  const raw = RECONNECT_BASE_MS * 2 ** (MAX_RECONNECT_ATTEMPTS - 1);
+  assert.ok(raw > RECONNECT_MAX_MS, "cap is only meaningful if the raw delay exceeds it");
+  assert.deepEqual(reconnectPlan(MAX_RECONNECT_ATTEMPTS), {
+    retry: true,
+    delayMs: RECONNECT_MAX_MS,
+  });
 });
 
 test("reconnectPlan retries through the whole budget then gives up", () => {
