@@ -12,7 +12,7 @@ export default async function SettingsLayout({
 }: {
   children: React.ReactNode;
 }) {
-  if (!(await getOwnerSafe())) redirect("/signin");
+  if (!(await getOwnerSafe())) redirect("/signin?next=/settings");
 
   return (
     <div className="grid h-dvh grid-cols-[240px_1fr] overflow-hidden bg-background">
