@@ -64,7 +64,9 @@ export default async function Home() {
         ownerLogin={owner.githubLogin}
         ownerAvatarUrl={owner.avatarUrl}
         activeProjects={activeProjects}
+        projects={projects}
         lastSession={lastSession}
+        lastProjectId={recent?.projectId}
       />
     </AppShell>
   );
