@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
+import { reconnectPlan } from "@/lib/runtime/reconnect";
 import { subscribeEventsWs } from "@/lib/runtime/session-client";
 
 import type { SessionAttachment } from "./use-session-attachment";
@@ -16,14 +17,11 @@ export type ConversationStreamState = {
   refresh: () => void;
 };
 
-// Reconnect backoff. Unlike EventSource (which absorbs blips with its own
-// retry), a WS close here triggers a full reconnect — refetch URLs + a fresh
-// token + a new socket. Without a cap that loops forever if the endpoint is
-// down (e.g. an old agent that lacks /events-ws), hammering /session. So back
-// off exponentially and give up after a bounded number of consecutive failures.
-const RECONNECT_BASE_MS = 500;
-const RECONNECT_MAX_MS = 30_000;
-const MAX_RECONNECT_ATTEMPTS = 6; // ~0.5,1,2,4,8,16s, then stop (~31s total)
+// Reconnect backoff lives in lib/runtime/reconnect (pure + unit-tested). Unlike
+// EventSource (which absorbs blips with its own retry), a WS close here triggers
+// a full reconnect — refetch URLs + a fresh token + a new socket — so the policy
+// backs off exponentially and gives up after a bounded number of consecutive
+// failures rather than hammering /session against a genuinely-down endpoint.
 
 // A single {error, closed} slice: reducer keeps effect body free of setState,
 // and both signals update from the same subscribe callbacks.
@@ -99,9 +97,11 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
           if (!active) return;
           dispatch({ kind: "closed" });
           const attempt = (reconnectAttemptsRef.current += 1);
-          if (attempt > MAX_RECONNECT_ATTEMPTS) {
-            // Give up rather than loop forever (e.g. endpoint permanently down);
-            // the user can refresh to retry.
+          const plan = reconnectPlan(attempt);
+          if (!plan.retry) {
+            // Automatic retry is exhausted (e.g. endpoint permanently down). Not
+            // a dead end: the visibility/focus/online effect re-arms this when
+            // the app becomes active again, and the user can refresh to retry.
             dispatch({
               kind: "error",
               message: "Lost the conversation stream. Refresh to reconnect.",
@@ -110,13 +110,9 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
           }
           // Back off, then let the shared attachment refetch URLs (coalescing
           // simultaneous terminal + events closes into one refresh).
-          const delay = Math.min(
-            RECONNECT_BASE_MS * 2 ** (attempt - 1),
-            RECONNECT_MAX_MS,
-          );
           reconnectTimerRef.current = setTimeout(() => {
             if (active) reconnect();
-          }, delay);
+          }, plan.delayMs);
         },
         onError: (err) => dispatch({ kind: "error", message: err.message }),
       },
@@ -128,6 +124,34 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
       sub.dispose();
     };
   }, [attachId, attachmentStatus, dispatch, reconnect, urls?.eventsUrl]);
+
+  // Idle recovery. A backgrounded/hidden webview (the desktop app hides to the
+  // tray) can have its socket suspended, so every backoff retry fails and we
+  // land in the closed/give-up state until the user does something — the "error
+  // when idle, works the moment I send a message" symptom. When the app becomes
+  // visible, regains focus, or the network returns, reset the retry budget and
+  // reconnect at once so the stream is healthy again before the next prompt,
+  // instead of waiting for a POST to incidentally revive it.
+  useEffect(() => {
+    if (attachmentStatus !== "attached") return;
+    // Only nudge when we're actually unhealthy; a focus event on a live stream
+    // must not churn the socket. When hidden, defer to the next visible event.
+    if (!ws.closed && !ws.error) return;
+    const rearm = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      reconnectAttemptsRef.current = 0;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      reconnect();
+    };
+    document.addEventListener("visibilitychange", rearm);
+    window.addEventListener("focus", rearm);
+    window.addEventListener("online", rearm);
+    return () => {
+      document.removeEventListener("visibilitychange", rearm);
+      window.removeEventListener("focus", rearm);
+      window.removeEventListener("online", rearm);
+    };
+  }, [attachmentStatus, ws.closed, ws.error, reconnect]);
 
   const status = useMemo<ConversationStreamState["status"]>(() => {
     if (attachmentStatus === "loading") return "loading";
