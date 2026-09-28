@@ -1,0 +1,16 @@
+{
+  "name": "outrunner-cloudflare",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Containers deploy tooling for the Outrunner control plane. Isolated from the root app so it never touches the app's lockfile or Docker build.",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/containers": "latest",
+    "@cloudflare/workers-types": "latest",
+    "wrangler": "^4"
+  }
+}

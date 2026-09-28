@@ -1,0 +1,38 @@
+{
+  // Cloudflare Containers deployment for the Outrunner control plane.
+  // Deploy tooling only — the application is unchanged from the Railway setup.
+  //
+  // The `containers` schema + @cloudflare/containers API move fast; verify field
+  // names against the current Cloudflare Containers docs before the first deploy.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "outrunner",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "573a49a12e65fd8fc97b0103fa200d36",
+
+  // The control-plane container. Build context is the repo root (where the
+  // Dockerfile lives and reads the whole app + bin/ agent binary).
+  "containers": [
+    {
+      "class_name": "OutrunnerControlPlane",
+      "image": "../Dockerfile",
+      "instance_type": "standard",
+      "max_instances": 3
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "CONTROL_PLANE", "class_name": "OutrunnerControlPlane" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OutrunnerControlPlane"] }
+  ],
+
+  // Serves the app at the production domain. Deploying with this record present
+  // creates/points the DNS entry in the neev.ai zone
+  // (id 4025edd7b4e5bf2fea54e245dc21427e). See docs/deploy-cloudflare.md.
+  "routes": [{ "pattern": "outrunner.neev.ai", "custom_domain": true }]
+}
