@@ -108,9 +108,17 @@ export function ClaudeConnection() {
               </p>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled={busy} onClick={connect}>
-                {busy ? <Loader2 className="size-4 animate-spin" /> : "Reconnect"}
-              </Button>
+              {desktop ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={connect}
+                  aria-label="Reconnect"
+                >
+                  {busy ? <Loader2 className="size-4 animate-spin" /> : "Reconnect"}
+                </Button>
+              ) : null}
               <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
                 Disconnect
               </Button>
