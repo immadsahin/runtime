@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "remote-connect-claude",
+  "description": "Allow the hosted Runtime web UI (loaded remotely in the main window) to trigger the native Claude connect flow. Scoped to the known Runtime origins.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["https://runtime.zerotrail.ai", "http://localhost:3000"]
+  },
+  "permissions": ["core:default"]
+}
