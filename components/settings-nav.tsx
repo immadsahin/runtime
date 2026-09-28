@@ -17,7 +17,7 @@ const sections = [
 export function SettingsNav() {
   const pathname = usePathname();
   return (
-    <aside className="flex min-h-0 flex-col gap-0.5 border-r border-border/60 px-4 py-6">
+    <aside role="navigation" aria-label="Settings" className="flex min-h-0 flex-col gap-0.5 border-r border-border/60 px-4 py-6">
       <Link
         href="/"
         className="mb-3 flex items-center gap-1.5 px-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
