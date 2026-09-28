@@ -17,6 +17,7 @@ import { optionalEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { getClaudeToken } from "@/lib/runtime/credentials/claude-credentials";
 import { runtimeSessionEnvironment } from "@/lib/runtime/ensure-runtime-computer";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
@@ -286,7 +287,9 @@ async function restoreDaytonaWorkspace(
       projectId: project.id,
       repoFullName: project.fullName,
       githubToken,
-      sessionEnv: runtimeSessionEnvironment(),
+      sessionEnv: runtimeSessionEnvironment({
+        claudeCodeOAuthToken: await getClaudeToken(userId),
+      }),
     });
     const computer = ensured.computer;
     if (!computer.daytonaSandboxId) {

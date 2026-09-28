@@ -170,6 +170,16 @@ type WorkspaceSnapshotRow = {
   updated_at: string;
 };
 
+// Per-user Claude Code credentials. Service-role-only (RLS on, no policies);
+// see supabase/migrations/20260807000000_user_claude_credentials.sql.
+type UserClaudeCredentialsRow = {
+  owner_id: string;
+  token_ciphertext: string;
+  token_last4: string;
+  created_at: string;
+  updated_at: string;
+};
+
 /** Columns the client may supply on insert (defaults fill the rest). */
 type Insert<Row, Required extends keyof Row> = Pick<Row, Required> &
   Partial<Omit<Row, Required | "created_at" | "updated_at">>;
@@ -184,6 +194,15 @@ export type Database = {
           "owner_id" | "github_repo_id" | "full_name" | "owner" | "name"
         >;
         Update: Partial<ProjectRow>;
+        Relationships: [];
+      };
+      user_claude_credentials: {
+        Row: UserClaudeCredentialsRow;
+        Insert: Insert<
+          UserClaudeCredentialsRow,
+          "owner_id" | "token_ciphertext" | "token_last4"
+        >;
+        Update: Partial<UserClaudeCredentialsRow>;
         Relationships: [];
       };
       workspaces: {
