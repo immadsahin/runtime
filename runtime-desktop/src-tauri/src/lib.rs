@@ -12,6 +12,9 @@
 // webview's own `/auth/callback`, so the PKCE verifier never leaves the webview
 // and the session cookie lands in the right place.
 
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
+
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -21,6 +24,117 @@ use tauri_plugin_deep_link::DeepLinkExt;
 
 const SITE: &str = "https://runtime.zerotrail.ai";
 const SITE_HOST: &str = "runtime.zerotrail.ai";
+
+/// Resolve the absolute path to the `claude` CLI. GUI apps inherit a minimal
+/// PATH, so we ask a login shell (which sources the user's profile) first, then
+/// fall back to common install locations.
+fn resolve_claude() -> Result<String, String> {
+    if let Ok(out) = Command::new("bash").arg("-lc").arg("command -v claude").output() {
+        if out.status.success() {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(path);
+            }
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates = [
+        format!("{home}/.claude/local/claude"),
+        format!("{home}/.local/bin/claude"),
+        "/opt/homebrew/bin/claude".to_string(),
+        "/usr/local/bin/claude".to_string(),
+    ];
+    candidates
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .ok_or_else(|| "claude-cli-not-found".to_string())
+}
+
+/// Open the first http(s) URL found on a line in the system browser (the OAuth
+/// login link `claude setup-token` prints while it waits).
+fn open_if_url(line: &str) {
+    if let Some(idx) = line.find("https://").or_else(|| line.find("http://")) {
+        let url: String = line[idx..].split_whitespace().next().unwrap_or("").to_string();
+        if url.len() > 8 {
+            let _ = open::that(url);
+        }
+    }
+}
+
+/// Pull the token out of the command's combined output. Prefers an explicit
+/// `sk-ant-…` token; falls back to a lone opaque line.
+fn extract_token(lines: &[String]) -> Option<String> {
+    for line in lines {
+        for word in line.split_whitespace() {
+            if word.starts_with("sk-ant-") && word.len() >= 20 {
+                return Some(word.trim().to_string());
+            }
+        }
+    }
+    for line in lines.iter().rev() {
+        let t = line.trim();
+        if t.len() >= 40 && !t.contains(char::is_whitespace) && !t.contains("http") {
+            return Some(t.to_string());
+        }
+    }
+    None
+}
+
+fn run_claude_setup_token() -> Result<String, String> {
+    let claude = resolve_claude()?;
+    let mut child = Command::new(&claude)
+        .arg("setup-token")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start `claude setup-token`: {e}"))?;
+
+    // The login URL and prompts often go to stderr; read it on a side thread
+    // while the main thread reads stdout, opening any URL either emits.
+    let stderr = child.stderr.take();
+    let err_handle = std::thread::spawn(move || {
+        let mut collected: Vec<String> = Vec::new();
+        if let Some(err) = stderr {
+            for line in BufReader::new(err).lines().map_while(Result::ok) {
+                open_if_url(&line);
+                collected.push(line);
+            }
+        }
+        collected
+    });
+
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(out) = child.stdout.take() {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            open_if_url(&line);
+            lines.push(line);
+        }
+    }
+
+    lines.extend(err_handle.join().unwrap_or_default());
+    let status = child
+        .wait()
+        .map_err(|e| format!("waiting for claude failed: {e}"))?;
+
+    if let Some(token) = extract_token(&lines) {
+        return Ok(token);
+    }
+    if !status.success() {
+        return Err("claude-setup-token-failed".to_string());
+    }
+    Err("no-token-in-output".to_string())
+}
+
+/// Native "Connect Claude": mint a portable `claude setup-token` on this
+/// machine (opening the browser to log in if needed) and hand it back to the
+/// web UI, which stores it server-side. The token never round-trips through the
+/// local credentials file, so a later `claude logout` does not rotate it.
+#[tauri::command]
+async fn connect_claude() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(run_claude_setup_token)
+        .await
+        .map_err(|e| format!("connect task failed: {e}"))?
+}
 
 /// Injected into the page so the web app knows it runs inside the desktop shell
 /// and can route sign-in through the system browser.
@@ -45,6 +159,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![connect_claude])
         .setup(|app| {
             // Main window → hosted Runtime UI, flagged as the desktop shell, with
             // off-site navigations (OAuth) bounced to the system browser.
