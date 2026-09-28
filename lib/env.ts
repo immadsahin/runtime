@@ -34,6 +34,8 @@ type EnvKey =
   // Claude Code
   | "ANTHROPIC_API_KEY"
   | "CLAUDE_CODE_OAUTH_TOKEN"
+  // Credential encryption (per-user Claude tokens at rest — secret-box.ts)
+  | "CREDENTIAL_ENCRYPTION_KEY"
   // Codex
   | "CODEX_API_KEY"
   // Provider selection

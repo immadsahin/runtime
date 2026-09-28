@@ -132,8 +132,36 @@ async function waitForReadyComputer(
   }
 }
 
-/** Server-only secrets that Claude needs after the agent is booted. */
-export function runtimeSessionEnvironment(): Record<string, string> {
+export type RuntimeSessionOverrides = {
+  /**
+   * A per-user Claude Code OAuth token (from `claude setup-token`). When set,
+   * it fully replaces the platform Claude credentials for this session: only
+   * this token is seeded and the platform `ANTHROPIC_API_KEY` is withheld, so a
+   * user running on their own subscription can never bill the platform API key.
+   * Codex credentials are unaffected. Empty/whitespace is treated as absent.
+   */
+  claudeCodeOAuthToken?: string | null;
+};
+
+/**
+ * Server-only secrets that Claude needs after the agent is booted.
+ *
+ * Defaults to the platform-wide credentials in `process.env`. Pass a per-user
+ * override to run a user's sandbox on their own Claude subscription instead.
+ */
+export function runtimeSessionEnvironment(
+  overrides?: RuntimeSessionOverrides,
+): Record<string, string> {
+  const userToken = overrides?.claudeCodeOAuthToken?.trim();
+  if (userToken) {
+    const env: Record<string, string> = { CLAUDE_CODE_OAUTH_TOKEN: userToken };
+    // The user's Claude token replaces platform Claude creds (no API key), but
+    // Codex is a separate engine and still uses the platform credential.
+    const codex = process.env.CODEX_API_KEY;
+    if (codex) env.CODEX_API_KEY = codex;
+    return env;
+  }
+
   const keys = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CODEX_API_KEY"] as const;
   return Object.fromEntries(
     keys.flatMap((key) => {
