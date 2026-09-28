@@ -29,6 +29,7 @@ type rawRecord struct {
 	Timestamp string  `json:"timestamp"`
 	Message   *struct {
 		Role    string                      `json:"role"`
+		Model   string                      `json:"model"`
 		Content json.RawMessage             `json:"content"`
 		Usage   *map[string]json.RawMessage `json:"usage"`
 	} `json:"message"`
@@ -170,8 +171,12 @@ func decode(line []byte) (Event, bool) {
 		UUID:       rec.UUID,
 		ParentUUID: rec.ParentID,
 		Role:       rec.Message.Role,
-		Timestamp:  rec.Timestamp,
-		Content:    content,
+		// The Claude model that produced this turn (assistant lines only; user
+		// turns carry none). Surfaced so the composer can show the model actually
+		// in use instead of a hardcoded label.
+		Model:     rec.Message.Model,
+		Timestamp: rec.Timestamp,
+		Content:   content,
 	}
 	return Event{Message: msg}, true
 }

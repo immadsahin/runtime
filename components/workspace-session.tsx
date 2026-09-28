@@ -67,6 +67,18 @@ export function WorkspaceSession({
     });
   };
 
+  // The model of the most recent assistant turn — shown in the composer so it
+  // reflects what's actually running, not a hardcoded label.
+  const activeModel = useMemo<string | undefined>(() => {
+    for (let i = conversation.events.length - 1; i >= 0; i--) {
+      const event = conversation.events[i];
+      if (event.t === "message" && event.role === "assistant" && event.model) {
+        return event.model;
+      }
+    }
+    return undefined;
+  }, [conversation.events]);
+
   const timelineEvents = useMemo<AgentEvent[]>(() => {
     const delivered = userPromptCount(conversation.events);
     const optimistic = pending
@@ -152,7 +164,7 @@ export function WorkspaceSession({
         )}
       </section>
 
-      <SessionComposer onSend={send} canSend={canSend} />
+      <SessionComposer onSend={send} canSend={canSend} model={activeModel} />
     </div>
   );
 }

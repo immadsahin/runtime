@@ -168,6 +168,7 @@ type ConversationMessage struct {
 	UUID       string         `json:"uuid"`
 	ParentUUID *string        `json:"parentUuid"`
 	Role       string         `json:"role"`
+	Model      string         `json:"model,omitempty"` // assistant turns only
 	Timestamp  string         `json:"timestamp"`
 	Content    []ContentBlock `json:"content"`
 }

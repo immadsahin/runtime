@@ -253,6 +253,9 @@ export const ConversationMessage = z.object({
   uuid: z.string(),
   parentUuid: z.string().nullable(),
   role: z.enum(["user", "assistant"]),
+  // The Claude model that produced the turn (assistant only; omitted on user
+  // turns). Lets the composer show the model actually in use.
+  model: z.string().optional(),
   timestamp: z.string(),
   // Tolerate content blocks the UI doesn't model (e.g. redacted_thinking, image,
   // or a newer Claude block type): drop the unrenderable ones instead of failing
