@@ -32,9 +32,11 @@ export function HomeView({
     : "there";
 
   return (
-    <div className="grid h-dvh grid-cols-[240px_1fr] overflow-hidden bg-background">
-      {/* Left sidebar — all actions. */}
-      <aside className="flex min-h-0 flex-col gap-6 border-r border-border/60 px-4 pb-4 pt-6">
+    <div className="grid h-dvh grid-cols-1 overflow-hidden bg-background sm:grid-cols-[240px_1fr]">
+      {/* Left sidebar — all actions. Hidden on narrow screens (the center's Start
+          + Continue still cover the primary flow); shows from the sm breakpoint,
+          below the desktop app's 720px min width. */}
+      <aside className="hidden min-h-0 flex-col gap-6 border-r border-border/60 px-4 pb-4 pt-6 sm:flex">
         <div className="flex items-center gap-2 px-1 font-mono text-sm font-semibold text-foreground">
           <Terminal className="size-4" />
           outrunner
@@ -82,7 +84,7 @@ export function HomeView({
       </aside>
 
       {/* Center — greeting + Start + Continue, text only. */}
-      <main className="flex min-h-0 items-center justify-center overflow-y-auto px-8">
+      <main className="flex min-h-0 items-center justify-center overflow-y-auto px-6 sm:px-8">
         <div className="w-full max-w-sm space-y-8 py-16">
           <div>
             <h1 className="text-2xl font-semibold text-foreground">
@@ -110,10 +112,10 @@ export function HomeView({
                 href={`/workspaces/${lastSession.id}`}
                 className="group flex items-baseline gap-2 py-1"
               >
-                <span className="font-semibold text-foreground transition-colors group-hover:text-muted-foreground">
+                <span className="min-w-0 truncate font-semibold text-foreground transition-colors group-hover:text-muted-foreground">
                   {lastSession.title}
                 </span>
-                <span className="truncate font-mono text-xs text-muted-foreground">
+                <span className="shrink-0 font-mono text-xs text-muted-foreground">
                   {lastSession.project}
                 </span>
               </Link>

@@ -10,7 +10,12 @@ export function fallbackProject(id: string): NavProject {
   return { id, name: "Repository", fullName: "Repository" };
 }
 
-const recency = (w?: Workspace) => w?.lastActiveAt ?? w?.createdAt ?? "";
+/** A workspace's recency key: its last-active time, or its creation time when it
+ *  has never been touched (a still-provisioning workspace has a null
+ *  lastActiveAt). ISO strings sort lexicographically, so plain string compare
+ *  orders them. Exported so the home "Continue" target ranks by the same rule as
+ *  the studio nav — a brand-new workspace must be considered most-recent. */
+export const recency = (w?: Workspace) => w?.lastActiveAt ?? w?.createdAt ?? "";
 
 /**
  * Group workspaces under their project for the studio nav, each group's items

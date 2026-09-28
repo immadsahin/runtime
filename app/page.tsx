@@ -5,6 +5,7 @@ import { HomeView } from "@/components/home-view";
 import { NewSessionCreator } from "@/components/new-session-creator";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { listProjects, listWorkspaces } from "@/lib/db/repositories";
+import { recency } from "@/lib/nav/workspace-nav-groups";
 import type { Project } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
@@ -36,9 +37,13 @@ export default async function Home() {
 
   const projectsById = new Map(projects.map((project) => [project.id, project]));
 
-  // Workspaces arrive most-recent-first, so the head is the single session to
-  // "Continue" in the center column.
-  const recent = workspaces[0];
+  // The single session to "Continue" in the center column. listWorkspaces sorts
+  // by last_active_at with nulls last, so a brand-new (still-provisioning)
+  // workspace — whose last_active_at is null — sorts to the tail; rank by
+  // `lastActiveAt ?? createdAt` (the studio nav's rule) so the newest wins.
+  const recent = workspaces.reduce((a, b) =>
+    recency(b).localeCompare(recency(a)) > 0 ? b : a,
+  );
   const lastSession = recent
     ? {
         id: recent.id,
