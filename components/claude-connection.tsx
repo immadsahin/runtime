@@ -97,32 +97,37 @@ export function ClaudeConnection() {
 
       <div className="rounded-lg border border-border/60 p-4">
         {connected ? (
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <Check className="size-4 text-emerald-500" />
-              <p className="text-sm text-foreground">
-                Connected
-                {meta?.last4 ? (
-                  <span className="text-muted-foreground"> · ends ····{meta.last4}</span>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <Check className="size-4 text-emerald-500" />
+                <p className="text-sm text-foreground">
+                  Connected
+                  {meta?.last4 ? (
+                    <span className="text-muted-foreground"> · ends ····{meta.last4}</span>
+                  ) : null}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                {desktop ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={connect}
+                    aria-label="Reconnect"
+                  >
+                    {busy ? <Loader2 className="size-4 animate-spin" /> : "Reconnect"}
+                  </Button>
                 ) : null}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              {desktop ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={busy}
-                  onClick={connect}
-                  aria-label="Reconnect"
-                >
-                  {busy ? <Loader2 className="size-4 animate-spin" /> : "Reconnect"}
+                <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
+                  Disconnect
                 </Button>
-              ) : null}
-              <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
-                Disconnect
-              </Button>
+              </div>
             </div>
+            <p className="text-xs text-muted-foreground">
+              Applies to workspaces created or restored after connecting.
+            </p>
           </div>
         ) : desktop ? (
           <div className="flex items-center justify-between gap-4">
