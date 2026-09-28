@@ -9,12 +9,14 @@
 
 /** First retry delay; doubles each consecutive failure up to the cap. */
 export const RECONNECT_BASE_MS = 500;
-/** Delay ceiling — one attempt per this interval is not "hammering". */
-export const RECONNECT_MAX_MS = 30_000;
+/** Delay ceiling — reached before the attempt budget runs out (the raw delay at
+ *  the last attempt would be 16s), so the tail is clamped instead of growing
+ *  unbounded if the budget is ever raised. */
+export const RECONNECT_MAX_MS = 8_000;
 /** Consecutive failures after which automatic retry stops. The hook re-arms on
  *  focus/visibility/online for the idle-suspend case, so this only ends the
  *  *automatic* loop (e.g. an endpoint that is genuinely down), not recovery. */
-export const MAX_RECONNECT_ATTEMPTS = 6; // ~0.5,1,2,4,8,16s, then stop (~31s)
+export const MAX_RECONNECT_ATTEMPTS = 6; // ~0.5,1,2,4,8,8s (capped), then stop
 
 export type ReconnectPlan =
   | { retry: true; delayMs: number }
