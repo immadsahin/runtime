@@ -1,47 +1,74 @@
 import Link from "next/link";
-import { FolderPlus, HelpCircle, Settings, SquarePen } from "lucide-react";
+import { FolderPlus, SquarePen, Terminal } from "lucide-react";
 
+import { HomeUserMenu } from "@/components/home-user-menu";
 import { ProjectAvatar } from "@/components/project-avatar";
 import type { Project } from "@/lib/runtime/types";
 
 export type SessionItem = { id: string; title: string; project: string };
-export type SessionGroup = { label: string; items: SessionItem[] };
 
 /**
- * The default home: a light sessions list. Projects with a live workspace live
- * in a left rail; sessions are grouped by recency in the main column. Opening a
- * row drops into that workspace's studio; "New session" starts a fresh one.
+ * The default home (Computer-style): every action lives in a full-height left
+ * sidebar, and the center is just text — a greeting, a "Start" action, and the
+ * last session to "Continue". Opening the last-session row drops back into that
+ * workspace's studio; "New session" starts a fresh one.
  */
 export function HomeView({
+  ownerLogin,
+  ownerAvatarUrl,
   activeProjects,
-  groups,
+  lastSession,
 }: {
-  /** Repositories with a live workspace — shown in the rail. */
+  /** GitHub login of the signed-in owner — used for the greeting and the pill. */
+  ownerLogin: string;
+  ownerAvatarUrl: string | null;
+  /** Repositories with a live workspace — listed in the sidebar. */
   activeProjects: Project[];
-  groups: SessionGroup[];
+  /** Most-recent session, surfaced as the single "Continue" link. */
+  lastSession: SessionItem | null;
 }) {
+  const name = ownerLogin
+    ? ownerLogin.charAt(0).toUpperCase() + ownerLogin.slice(1)
+    : "there";
+
   return (
-    <div className="mx-auto grid h-dvh max-w-4xl grid-cols-[190px_1fr] gap-14 overflow-hidden px-8">
-      <aside className="min-h-0 space-y-8 overflow-y-auto pb-8 pt-20">
-        <div>
-          <div className="flex items-center justify-between">
-            <h2 className="text-[15px] font-semibold text-foreground">Projects</h2>
+    <div className="grid h-dvh grid-cols-[240px_1fr] overflow-hidden bg-background">
+      {/* Left sidebar — all actions. */}
+      <aside className="flex min-h-0 flex-col gap-6 border-r border-border/60 px-4 pb-4 pt-6">
+        <div className="flex items-center gap-2 px-1 font-mono text-sm font-semibold text-foreground">
+          <Terminal className="size-4" />
+          outrunner
+        </div>
+
+        <nav className="space-y-0.5">
+          <SidebarLink
+            href="/new"
+            icon={<SquarePen className="size-4" />}
+            label="New session"
+          />
+        </nav>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Workspaces
+            </h2>
             <Link
               href="/new"
               aria-label="New session"
-              className="-mr-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
-              <FolderPlus className="size-4" />
+              <FolderPlus className="size-3.5" />
             </Link>
           </div>
-          <div className="mt-3 space-y-0.5">
+          <div className="mt-2 space-y-0.5">
             {activeProjects.length === 0 ? (
-              <p className="px-1 text-sm text-muted-foreground">No active workspaces.</p>
+              <p className="px-1 py-1 text-sm text-muted-foreground">No workspaces yet</p>
             ) : (
               activeProjects.map((project) => (
                 <div
                   key={project.id}
-                  className="flex items-center gap-2.5 rounded-md px-1 py-1.5 text-[15px] text-foreground"
+                  className="flex items-center gap-2.5 rounded-md px-1 py-1.5 text-sm text-foreground"
                 >
                   <ProjectAvatar name={project.name} />
                   <span className="truncate">{project.name}</span>
@@ -51,56 +78,70 @@ export function HomeView({
           </div>
         </div>
 
-        <div className="space-y-0.5">
-          <RailItem icon={<Settings className="size-4" />} label="Settings" />
-          <RailItem icon={<HelpCircle className="size-4" />} label="Help" />
-        </div>
+        <HomeUserMenu ownerLogin={ownerLogin} ownerAvatarUrl={ownerAvatarUrl} />
       </aside>
 
-      <main className="min-h-0 overflow-y-auto pb-24 pt-20">
-        <div className="mb-5 flex items-center justify-end">
-          <Link
-            href="/new"
-            className="flex items-center gap-2 text-[15px] text-foreground transition-colors hover:text-foreground"
-          >
-            <SquarePen className="size-4" /> New session
-          </Link>
-        </div>
+      {/* Center — greeting + Start + Continue, text only. */}
+      <main className="flex min-h-0 items-center justify-center overflow-y-auto px-8">
+        <div className="w-full max-w-sm space-y-8 py-16">
+          <div>
+            <h1 className="text-2xl font-semibold text-foreground">
+              Taking a breather, {name}?
+            </h1>
+            <p className="mt-1 font-mono text-xs text-muted-foreground">
+              @{ownerLogin || "outrunner"} · outrunner
+            </p>
+          </div>
 
-        <div className="space-y-7">
-          {groups.map((group) => (
-            <section key={group.label}>
-              <h3 className="mb-2.5 text-[15px] text-muted-foreground">{group.label}</h3>
-              <div className="-mx-2 space-y-0.5">
-                {group.items.map((session) => (
-                  <Link
-                    key={session.id}
-                    href={`/workspaces/${session.id}`}
-                    className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent"
-                  >
-                    <ProjectAvatar name={session.project} />
-                    <span className="truncate font-semibold text-foreground">
-                      {session.title}
-                    </span>
-                    <span className="truncate text-muted-foreground">
-                      {session.project}
-                    </span>
-                  </Link>
-                ))}
-              </div>
+          <section>
+            <h2 className="mb-2 text-sm text-muted-foreground">Start</h2>
+            <Link
+              href="/new"
+              className="block py-1 text-[15px] text-foreground transition-colors hover:text-muted-foreground"
+            >
+              New session
+            </Link>
+          </section>
+
+          {lastSession && (
+            <section>
+              <h2 className="mb-2 text-sm text-muted-foreground">Continue</h2>
+              <Link
+                href={`/workspaces/${lastSession.id}`}
+                className="group flex items-baseline gap-2 py-1"
+              >
+                <span className="font-semibold text-foreground transition-colors group-hover:text-muted-foreground">
+                  {lastSession.title}
+                </span>
+                <span className="truncate font-mono text-xs text-muted-foreground">
+                  {lastSession.project}
+                </span>
+              </Link>
             </section>
-          ))}
+          )}
         </div>
       </main>
     </div>
   );
 }
 
-function RailItem({ icon, label }: { icon: React.ReactNode; label: string }) {
+/** A sidebar navigation link (routes somewhere). */
+function SidebarLink({
+  href,
+  icon,
+  label,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+}) {
   return (
-    <div className="flex items-center gap-2.5 px-1 py-1.5 text-[15px] text-muted-foreground">
+    <Link
+      href={href}
+      className="flex items-center gap-2.5 rounded-md px-1 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
+    >
       {icon}
       {label}
-    </div>
+    </Link>
   );
 }
